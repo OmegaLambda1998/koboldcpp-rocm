@@ -12,7 +12,7 @@ Current version indicated by LITEVER below.
 -->
 
 <script id="init-config">
-	const LITEVER = 263;
+	const LITEVER = 265;
 	const urlParams = new URLSearchParams(window.location.search);
 	var localflag = urlParams.get('local'); //this will be replaced automatically in embedded kcpp
 	const STORAGE_PREFIX = (localflag?"e_":"")+"kaihordewebui_";
@@ -2540,8 +2540,9 @@ Current version indicated by LITEVER below.
 	// Define all constants used in Lite
 	// base64 js image resources
 	const rootStyles = getComputedStyle(document.documentElement);
-	const niko_square = rootStyles.getPropertyValue('--img_nikosquare').match(/url\("(.*)"\)/)[1];
-	const human_square = rootStyles.getPropertyValue('--img_humansquare').match(/url\("(.*)"\)/)[1];
+	var niko_square = rootStyles.getPropertyValue('--img_nikosquare').match(/url\("(.*)"\)/)[1];
+	var human_square = rootStyles.getPropertyValue('--img_humansquare').match(/url\("(.*)"\)/)[1];
+	const corpo_greeter_square = niko_square;
 	const favicon_busy = rootStyles.getPropertyValue('--img_favicon_busy').match(/url\("(.*)"\)/)[1];
 	const favivon_normal =rootStyles.getPropertyValue('--img_favicon_normal').match(/url\("(.*)"\)/)[1];
 	const compressed_scenario_db = ["XQAAAQCkKgAAAAAAAAA9iIqG1FTp3Td41VnWyuXTp3Lb95KmIEizGvJcmkqrV2FY5cKEeSxCwbqBRjHVjL7PUH9wCoW89dPxjDNZvgp6okMOelpy7_1P6GV-mfJV4jz42_DXqYfET4aYlAT13M95gkcA14f0NLvI_p6B9CyG8EbkhRxsk3uyf_KgTV5kwqzAcr5C4JQ_pJr77GnYCHQI8h6F765-lcqrvw1Xu1GHhcN3lj7s9PhMvLnmGPZbQMrTo5sqPJDzYO6lytxmNSHSXMICpN2kFJB6kqyL5lBxNAH3Au_F_JIC85GqwLXWEy8wZms5KmAdp1s3EA1yabPGqqF0G5RxBp3aXzm7h6QUJPy1qSr6JJAo4fi2gCPaLkdn2pKqNDR1Ww8FA6AVHOyMgCTmmrQxWVYgXY9TdhHKcRcrIsoHNXEeWSqMGJNQ8lzVfc26teZdBdPLhqcClG8wUThPtyobTMz8Fgom88nTv7VT-mZhwH9Nc4ghoCL8dMR0Skf-EYDZ0Uvz03_GTn5OB8yuX6FmsD1XQJv_CKBAUHeDKd7n_bC7WOnlAINHPX9Bh5TnwjeLYO-UAL2ClMJTFzR-k2cjVHGQnLB7hZ48L1nToRG1gSVN7dP3Zysw7riwIxnfG4MMNXtEbHyxrCvz2zRTUEqbHLrwIzdJRpJ5s5XfTlY1CPZkQCwxbA6rrUt27D6a-YDKavbg0hubpViPRYbnEDXr9gL-7in4f_K2cOZdQ26Q--hk0xzEtgBNFI6inHA2nA4LofUpWjl835qg6CUyz9EzQkw0cDgPVjYXehC9oC_3H0U2O9YC-Ah8VpdPdCHUFuaQr7oXgePUub_Be1XQyCA5TaqrJxVxUG2hZA4rOVJHZ_AahfiJN7z6QcVEp-8xf-wHcv1lpWjjNdXFWDqVQZkdOaKf63dtjP35SmC5eCw2_BNX_t-db_FCCAhm2Vn2WI3q4k00p4l_ocCrJIdRID6muBVZQXCzxcRf5m8kcGwrTB-XVS-XSSPZInaBxZjgimOl5bLwJvdMC-HNYtU-yUDjXvDjPraZ_7ZV_-knU1GbHf1BpI9-rNbl_3bbA7KbmL7Q_goV1Clvi6gLYgjbXGQMTFjQEoodZX3fK_bDhVsrA1fWMJMWwfY3ua-j8HNuyRDfhPBpbTK0Gvz5-GWbIRF3v4zwR9HzIjz2frY7luy3ApQ6QJw7K6ITvD80u5VLfpHYReVCLpgs-lvPStklgnGXj3j5vuaH9f-wFohB19vwzRnthvgdplXPQ9jMy3ieb80sELS0WiGD-E2L_HhNXUcpTdeBp3HQFK4QubJOiIeKuZDVR7PxvtwBj26m-pLXLzKc6WqQlt07TsRo_72SlAaZodyyFRXf8636HCAyEHcVEhR6uZ1lDu00BHvsyVe6BdG7zvjNdmLluA0qBJQ9FO3ipHezadlwCPnEBDQAAZRgHKUvRCJNOQH_jcqFLLtmDADXoLvcK8_lN0LEeisA4B1LH0X2x0Q6NqLgngh9M1y_cBEBaazMa_UIZwoL6eZGU0QhlpvysBi1wKDybNcF_uKrIxdQwn8L_QRFHtDn39-hw-GDs_6zbnRlwrBEwrMtAQfc62FLSzGUMAzww-aTGvUuQvP-D9m0r-eDbSATlSsrIYobVUDUdDWsMDUsjKfYOW_Rp0GMjk40BQxcdzjNjLCYaTEN5cMhsWyfTbhIHDP7-wfbvJG7Al7Z-nH2Pa-QXPte687xVanKT0d3Er07vOV9HoI09mtuhxE4g0VaLm4TMqxSMRBX3EB60W1U2sX9sHjAgmwfpUNXRNj03QeJe4cg0pndf-hhKkTsfNQMU_N6-Zt8IrM2xtzFfvKB4BpFyWmaYu_X7bGwgSZjzrBNE10fx001fMr2fmrVy_sj7mW7WhlWXa3N5eMe4pqkA4EawmGzhuIwAqZNmtvnL_N2nt4T4ZyqkAAyXMMKb60UJAXkqLjUisD1bnNt1qD9otg8mGNzQxlaY5Bfm7286vNmjyxGY4UVrn0RV0DSFFb5_NYEW5y5YYxiabWABr8k0ezTM8R_qQ7NxdUOj0qhBKOqGyzyuVgKNnB6-ZzpKVGbB7RYJXwfEtkKNuUc3UWmbwxcsCTuW4TOScqJUh4dA5vlgLjB3-Q79yEMRYB8n6jetkR4z25RkYRXvTxkHIVQd2qr8BchdUcmHsZvG_tXI0-bxx_f_TGyfgi8ol7L5SRfWfOtYHCXSVHOCwnDj7GN4rIrwt3qWRcPkdTMw1RguDZW0eTpCpZyCJH_z3xVfpVh5lgf7Nu4tH-CpFRrOaJc79K1lSuIZs8yvjh5dbYAH4rKQ28OOFRu2MmU7Ko8Of4CECcJMhohFtVW6nTCB48-Pl8owiGM5_2uBJOJRAsyu3fHHbKqKvZ-0kYmN9ypyTAxQjgDiCOE3J1txPiqRRRRSaFZgLPNacdyjGO2y2SpWwzYudx8tEq3tBDAPBCXwWqwefcG__iN5OMRgCIAvr-9qfl2iSaVR5LZ-kBluVoW27o0hIUtgdry03bmUN50ob4hwCz8xVoupcHjI3Cy0nLpgiGixjo4afafQPE_TXJf-NixlWN-cH2a4ZzU6Qc5KKzIciwnt6Hx-iRQzB_uK-pBDjC8boVXolOsFyaqWsoLgkghTo2qCFZuxP2GKzS9wQ5sBWxTMEPGryHxaylpXXmUjlBJ-j9p4vJN9YxjQEbyuTVYy0PxmtDbyh6g_n3Lr09ttCg40hqfWBhCT9P4-uFoAjozUciHQFBfI8t04dKZnobLbVq-f_HJGzUZu5zHRHsPI939tJxODDJxiflfHLwxXjQS2cq9Vj-kvn1pgXAN5unYh8Y7-nqepxc0KkO2v8mU-r8fYFmUFJdZu6HR23P2y7ndsozZEKdUAVay36pmW_gvVQuSA_jzLwXn3Ee2y-A7G-w96bTe82gJG95PsSOt2L6AcuF8mqWL_EVBjIZJMN63T__0UHh9VPDCRTUITwn35t7Z0aGYHnssPVAxXLh7y2LhCaIN0u6lnbiDlKAdKc1-4qYbr1sHORC8tjSG8cjWLkgBcNkFo7rqhKQSNtU1H44aT8ceG08a8cSpze8aC6dMVaz6DxEaFIZ-aRqfqO0QV6ty2-6hrcRVedypt1Twd7UEkXZM5Erjb-_8jq4RzshqXVzKEqPfIYpmtHqkmeJq8BLfc1GT9UGrmPpYO4-K8LM-u7aOpcxcagPn2S3McsWI3a8CWkU9t4g9WEPNH-5s8VqF-3rSmgi5kk40Y7HjEyA-6clhNhl9lbP6hIbf9TKHO9fWwzTz8NieUPNZZPgrBrULggzHXPrfJIxl8eLSrKuD8n2Pbumu2k4ljMV_WIq9qCJ1wPofdIoWHWiz7oV2snLve1CFPUCdAhLkHQ8KpO6xvSi6mKY9WsOhOLxKm92vsWLv-rfM2CW4XUja5arRpGynr7cF9CDuEGWIxkPjOF_5x8ZXg2x1TJcrgvLDO_S4u2zKl2tQGRW4NHU1zF9h_3SQkpbwWH5KOPisP6c8vb5rg_rZ5laFedxQQSpguSq5el9-ddzvlr4C8Q22eDQvwUEO_P6c6VZN5A2QWBGZsJoaZ4gZ8UArmGLxSihBj_5oOdDdUcbUOhGUIWrtYrs4PJKxpnHDFUZaYwIbtnLyAoORKYvq8LgAH0SP57KeeYkZzUGP1f0jkDzAmwV4ZHE0pnZhEo3XkXVuIHc6MXZ-RniZaS_vaoY3Bq6XHrKoWZdLiCoU6aqPc-ZpPnvXmnKHyLLs4e96M1wGKIyT28_VCR6EDRJPxbZ9Ig1kN8TIHCF3tE8y2It5hkz1-zNYT6uw3SDkFSdrV_DRiAVqUhxrQdUPhpD92zVgsWdJR0TZLU7CBLlOuBVwyfmtHMUBL6dIvYie47Kr47nOJ5i2ka8EZGZf-Y8aD6xv6hpBbybU_5oGfYLRG4MiNRhML4u90tQ3hBxBbGYK8sWOzui2UEx0ynB_a8jz8eEs7u_9ylTD1v1f-gC8JYQMNAZIm46pvl2s1X07B8Gf7Laj4aozcWqg8DgC_8aLypoTffyxjWw4Fpd8LWn1fRPsFOdeV0UrS7FNtUakvYq_qxphGu5mNuINIJIMJzgI3giGnyCbr2IrsJ1ITmEGnggLQYes1t3j44v1quvVwQXqHX6HhSnoJlN2IlT5DuZ2kx6-pb68nK62xVJaOS-wDeeJnQ8zzhqJACstuF7g-jidRoJmGc8yChHfCN8ZFOhT0poNQB-Jf5IUZ7aSCXmceYN4VUhmB_w-Db1XZUNHOJqGiTgcT1KzejzNpN49b0QUjcRJiOpEhJp_LzBUiRQSnweOSFrWlTs5Jf9p3wqN9zFYZ_3Xz6IR2klwyLQXc-LbBd1QFwkB17HTYMspUXjrSpJULdQ90OxzbSEafF4RKvgIL4sAU1pCMTa2bVrcUmY2MiECVIbwPNN0CjZeoEAd1dP5FFjlwGG7xUNRO1E20CqHZJ1oqeEur06ZXvPK1zy3SlF-_lKF6eRfNClzR2ERGYqf-zEQwwkPNiMNnURPcdt64pw4kcjTKBIkorum3ruuqJZMitcZx0YiANx7ssy8dMuVteEFFCQnmglgTCsEZTK_xzigPie_f8Q5p1vsJPje5Z2cugsaW-vOXbuOE471n6LuIyoII2dWq0m8H3_8pxlErkZ5E7OY--w3InCuSCv2ubxaZ9AbaNuuyGw49fI3zvRurTYespYO-Aj1FcjDrxqRB3bihJm_u3a56fwnoyOeE0071TY_AlVlq1RYauV4-7L-RAFJZo0wKnPZM9Hs7VB_cCwJ_oPe1y0XBF95agtAQdicj42KdstIlpjWtdGb4LpHgVQI_56G3As0H81-uj47VuBourA2hUay0BpHAvcwbNLyu8OcZB31I6dfy2797wGlrWwAN-Xt3M3CVW9SvIN_GMlg0RB75rUEtgPkR-VPRdPH_Jb19wVoFPPpwjP6cYzVW1U_iRymFKaNpMo4CWFN6t54wshlCVwkfZKbhSP14z74oMKxy-qqt-WKNhkOr1uh_sevNa57iHBnFlHzt_eaZoPNTsCmzqnC4boOlK9o5_hFn8hiw33R3NQC-RD-w1XEl8-hpdZYdCcnexwRYd9sH2LMHySL59Kp_09yIwAE_ukVMDa6Yd9OHrbSCycQNZSI_0fMnF5s9oWTXnsxecDpRKgSWJQIQPUb6dlOdGOT0-MnebivpKgbDxzx52Zr0EMS7aU5eJxEdO9rdiFda8kQk5IeBgr1QcqIFs_1UIp6oQneXgwTlpXXxLHs16ShDG1qkLmDZjb4vrb_Ha2YCBIqid6wVKjec-UwEwWyvfV4UAPFgiNRJN7TdQNRxbSZJ8XWeA2gor9PN5JkMS0l_qGKoke3sbWDsp-G_B0KUjwUBTtPsKRhdnc0JyV_akuZ8jxAmXDDydxOy_EqNMgrDGN_4FuSY7XNLy2OXXJG3bB9a_lxEzdVNPWzM0cijTQFLzIiAKAyWTfwPNagcvgLUAeHxlQ22E0V37-sFwkstvpJ-s8C2yqxQKcv4GfMZOfSYEaZAhiO_y8EXgFknGGwjLB7K3CgvGwBRWWcgx-eqXYs9rAygf_X2_7-rBG_7Rxj3GW957PwwzwZjZDkdRHik8sj0htIkDRAyHo2EsPwObKXK-W32JKUX3VSgiY8AzCUhUUIWwFVVLXEvB1jtU7G7wRaj5_z9QywvgoIqnOTmpm4TTRA0cCJkiYoJcl8BOIHoWuYznL89zWjWy_ZQDKaYAsHugQYXaKI_UaaLV4gVFjDNqZCgqjAFyMjG4qZR64jkaI71mefUaDLLwsqIiLpOWZi8BlvP0YcOVeTyo2mJbq3EXfjXyDvPuZuZ9SAjqwCdLr902yzLm4DdzYRyfPbpt8rGUu-Uw27Ix2oZRe_zj0G_3FdCw0"];
@@ -3425,6 +3426,9 @@ Current version indicated by LITEVER below.
 		websearch_retain: false,
 		websearch_template: "",
 		wordsearch_enabled: false,
+		second_ep_qty:0,
+		second_ep_model:"gpt2",
+		second_ep_url:"",
 
 		max_context_length: (localflag?4096:2048),
 		max_length: (localflag?512:256),
@@ -3459,6 +3463,8 @@ Current version indicated by LITEVER below.
 	};
 
 	const defaultsettings = JSON.parse(JSON.stringify(localsettings));
+	//visionmode 0=disabled, 1=hordeinterrogate, 2=localinterrogate, 3=multimodal
+	//type 0=img, 1=audio
 	const default_imgs_meta = {prompt:"", desc:"", visionmode:0, aspect:0, ref:"", len:0, type:0, data: ""};
 
 	//a list of presets users can choose from
@@ -5991,16 +5997,28 @@ Current version indicated by LITEVER below.
 				const matchedlw = match.match(/^[ \t]*/);
 				const leadingWhitespace = matchedlw ? matchedlw[0] : '';
 				content = unescape_html(content);
+				if(content.match(/^\${1,}$/)) //only dollar signs, just return
+				{
+					return match;
+				}
 				return leadingWhitespace + temml.renderToString(content); // render LaTeX content
 			});
 			input = input.replace(/(?:^|[^\\])\$(\S[^$\n]*?\S)\$(?!\d)/g, (match, p1) => {
 				let content = p1;
 				content = unescape_html(content);
+				if(content.match(/^\${1,}$/)) //only dollar signs, just return
+				{
+					return match;
+				}
 				return " "+temml.renderToString(content); // render LaTeX content
 			});
 			input = input.replace(/(^\\begin\{math\}\n([\s\S]*?)\n\\end\{math\}$|^\\begin\{equation\}\n([\s\S]*?)\n\\end\{equation\}$)/gm, (match, p1, p2, p3) => { //match math eqns
 				let content = p2 || p3;
 				content = unescape_html(content);
+				if(content.match(/^\${1,}$/)) //only dollar signs, just return
+				{
+					return match;
+				}
 				return temml.renderToString(content); // render LaTeX content
 			});
 			return input;
@@ -7679,7 +7697,7 @@ Current version indicated by LITEVER below.
 							true
 						);
 					} else {
-						msgbox("Could not load selected file. Is it valid?");
+						msgbox("Could not load selected file. Is it valid?\n\nIf you are trying to attach files to the current session, please drop them into the input box instead.");
 					}
 				}
 
@@ -12672,6 +12690,9 @@ Current version indicated by LITEVER below.
 		document.getElementById("dry_base").value = localsettings.dry_base;
 		document.getElementById("dry_allowed_length").value = localsettings.dry_allowed_length;
 		document.getElementById("token_count_multiplier").value = localsettings.token_count_multiplier;
+		document.getElementById("second_ep_qty").value = localsettings.second_ep_qty;
+		document.getElementById("second_ep_model").value = localsettings.second_ep_model;
+		document.getElementById("second_ep_url").value = localsettings.second_ep_url;
 
 		if(is_using_kcpp_with_mirostat())
 		{
@@ -13245,6 +13266,9 @@ Current version indicated by LITEVER below.
 		localsettings.token_count_multiplier = parseInt(document.getElementById("token_count_multiplier").value);
 		localsettings.guidance_scale = parseFloat(document.getElementById("guidance_scale").value);
 		localsettings.guidance_prompt = document.getElementById("guidance_prompt").value;
+		localsettings.second_ep_qty = parseInt(document.getElementById("second_ep_qty").value);
+		localsettings.second_ep_model = document.getElementById("second_ep_model").value;
+		localsettings.second_ep_url = document.getElementById("second_ep_url").value;
 
 		localsettings.extrastopseq = document.getElementById("extrastopseq").value;
 		localsettings.tokenbans = document.getElementById("tokenbans").value;
@@ -13444,6 +13468,7 @@ Current version indicated by LITEVER below.
 		localsettings.xtc_threshold = cleannum(localsettings.xtc_threshold, 0.0, 1.0);
 		localsettings.sampler_seed = cleannum(localsettings.sampler_seed, -1, 999999);
 		localsettings.token_count_multiplier = cleannum(localsettings.token_count_multiplier, 70, 130);
+		localsettings.second_ep_qty = cleannum(Math.floor(localsettings.second_ep_qty), 0, 1024);
 		toggle_invert_colors();
 		toggle_sidepanel_mode();
 
@@ -13899,6 +13924,7 @@ Current version indicated by LITEVER below.
 
 			on_searchsummary_done = onDoneFn;
 
+			submit_payload = finalize_submit_payload(submit_payload, false);
 			dispatch_submit_generation(submit_payload, false);
 			render_gametext();
 		}
@@ -13973,7 +13999,8 @@ Current version indicated by LITEVER below.
 		//v2 api specific fields
 		submit_payload.workers = selected_workers.map((m) => { return m.id });
 
-		dispatch_submit_generation(submit_payload,false);
+		submit_payload = finalize_submit_payload(submit_payload, false);
+		dispatch_submit_generation(submit_payload, false);
 		render_gametext();
 		document.getElementById("memorytext").value = "[<|Generating summary, do not close window...|>]"
 		};
@@ -14725,7 +14752,7 @@ Current version indicated by LITEVER below.
 			let userinput = getInputBoxValue();
 			if(userinput.trim()!="")
 			{
-				var sentence = userinput.trim().substring(0, 380);
+				var sentence = userinput.trim().substring(0, 540);
 				do_manual_gen_image(sentence);
 			}
 		},false);
@@ -14734,11 +14761,11 @@ Current version indicated by LITEVER below.
 
 	function self_upload_file_dispatch(data,filename)
 	{
-		const maxSize = 20 * 1024 * 1024; // approx 20MB limit
+		const maxSize = 30 * 1024 * 1024; // approx 30MB limit
 		const dlen = (data.length*0.75);
 		const mbs = Math.ceil(dlen/1024/1024);
 		if (dlen > maxSize) {
-			msgbox(`Selected file exceeds 20MB size limit!\nSelected file was ${mbs}MB. Please try a smaller file.`, "File Too Large");
+			msgbox(`Selected file exceeds 30MB size limit!\nSelected file was ${mbs}MB. Please try a smaller file.`, "File Too Large");
 			return;
 		}
 
@@ -16543,6 +16570,14 @@ Current version indicated by LITEVER below.
 
 			if (!doNotGenerate)
 			{
+				submit_payload = finalize_submit_payload(submit_payload, user_input_empty);
+				if(localsettings.second_ep_qty>0 && localsettings.second_ep_url!="")
+				{
+					let decensored_prefix = yield FetchDecensoredPrefix(submit_payload, localsettings.second_ep_url, localsettings.second_ep_model, localsettings.second_ep_qty);
+					console.log(`Obtained Prefix: ${decensored_prefix}`);
+					pending_context_preinjection += decensored_prefix;
+					submit_payload.prompt += decensored_prefix;
+				}
 				dispatch_submit_generation(submit_payload, user_input_empty);
 			}
 			else
@@ -16554,7 +16589,7 @@ Current version indicated by LITEVER below.
 			{
 				let txt = "I'll try and create that image.";
 				gametext_arr.push(txt);
-				var sentence = img_gen_trigger_prompt.trim().substring(0, 380);
+				var sentence = img_gen_trigger_prompt.trim().substring(0, 540);
 				do_manual_gen_image(sentence);
 			}
 
@@ -16712,10 +16747,8 @@ Current version indicated by LITEVER below.
 		return resp;
 	}
 
-	function dispatch_submit_generation(submit_payload, input_was_empty) //if input is not empty, always unban eos
+	function finalize_submit_payload(submit_payload, input_was_empty)
 	{
-		console.log(submit_payload);
-
 		//preprocess to add extra fields
 		if(custom_kobold_endpoint != "" && is_using_kcpp_with_mirostat())
 		{
@@ -16770,6 +16803,28 @@ Current version indicated by LITEVER below.
 			submit_payload.params.negative_prompt = localsettings.guidance_prompt;
 		}
 
+		//for vesion 1.2.2 and later, send stopper tokens for chat and instruct
+		if (custom_kobold_endpoint != "" && kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.2") >= 0) {
+			submit_payload.params.stop_sequence = get_stop_sequences();
+		}
+
+		//version 1.2.4 and later supports unban tokens
+		if (custom_kobold_endpoint != "" && kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.4") >= 0)
+		{
+			submit_payload.params.use_default_badwordsids = determine_if_ban_eos(input_was_empty);
+			if(is_using_kcpp_with_added_memory())
+			{
+				submit_payload.params.bypass_eos = (localsettings.eos_ban_mode == 3?true:false);
+			}
+		}
+
+		return submit_payload;
+	}
+
+	function dispatch_submit_generation(submit_payload, input_was_empty) //if input is not empty, always unban eos
+	{
+		console.log(submit_payload);
+
 		start_time_taken(); //timestamp start request
 
 		if (is_using_custom_ep()) {
@@ -16790,23 +16845,6 @@ Current version indicated by LITEVER below.
 				let prompt = submit_payload.prompt;
 				submit_payload = submit_payload.params;
 				submit_payload.prompt = prompt;
-				let showlog = false;
-				submit_payload.quiet = !showlog;
-
-				//for vesion 1.2.2 and later, send stopper tokens for chat and instruct
-				if (kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.2") >= 0) {
-					submit_payload.stop_sequence = get_stop_sequences();
-				}
-
-				//version 1.2.4 and later supports unban tokens
-				if (kobold_endpoint_version && kobold_endpoint_version != "" && compare_version_str(kobold_endpoint_version, "1.2.4") >= 0)
-				{
-					submit_payload.use_default_badwordsids = determine_if_ban_eos(input_was_empty);
-					if(is_using_kcpp_with_added_memory())
-					{
-						submit_payload.bypass_eos = (localsettings.eos_ban_mode == 3?true:false);
-					}
-				}
 
 				last_request_str = JSON.stringify(submit_payload);
 				last_response_obj = null;
@@ -17004,18 +17042,6 @@ Current version indicated by LITEVER below.
 				}
 				else
 				{
-					//apply custom logit bias for official OAI only
-					let needbaneos = (custom_oai_endpoint.toLowerCase().includes("api.openai.com") && determine_if_ban_eos(input_was_empty));
-
-					if(needbaneos)
-					{
-						if(oai_payload.logit_bias)
-						{
-							oai_payload.logit_bias["50256"] = -100;
-						}else{
-							oai_payload.logit_bias = { "50256": -100 };
-						}
-					}
 					oai_payload.prompt = submit_payload.prompt;
 				}
 
@@ -17916,11 +17942,18 @@ Current version indicated by LITEVER below.
 		}
 
 	}
-	function zoomed_transcribe_btn(audiohash,onDone)
+	function zoomed_transcribe_btn(audiohash)
+	{
+		transcribe_audio_file(audiohash,(txt)=>{
+			msgbox(txt,"Transcribed Audio");
+		});
+	}
+	function transcribe_audio_file(audiohash,onDone)
 	{
 		let fetchedblob = data_hash_to_blob_lookup[audiohash];
 		if(!fetchedblob)
 		{
+			onDone(null);
 			return;
 		}
 		fetch(fetchedblob.blob)
@@ -17950,10 +17983,14 @@ Current version indicated by LITEVER below.
 						console.log(resp);
 						if(resp && resp.text && resp.text!="")
 						{
-							msgbox(resp.text,"Transcribed Audio");
+							onDone(resp.text);
+						}else
+						{
+							onDone(null);
 						}
 					}).catch((error) => {
 						console.log("Transcribe Error: " + error);
+						onDone(null);
 					});
 				}
 				reader.readAsDataURL(wavblob);
@@ -17968,14 +18005,34 @@ Current version indicated by LITEVER below.
 		if(savedmeta)
 		{
 			savedmeta.visionmode = document.getElementById("aivisionmode").value;
-			if(!savedmeta.desc && (savedmeta.visionmode==1 || savedmeta.visionmode==2))
+			if(savedmeta.type==1) //audio
 			{
-				//request a new interrogation
-				var alreadysent = Object.values(interrogation_db).some(item => item.imghash === imghash);
-				if(!alreadysent && document.getElementById("zoomedimg"))
+				if(!savedmeta.desc && savedmeta.visionmode==2)
 				{
-					let b64 = document.getElementById("zoomedimg").src;
-					interrogate_new_image(b64,imghash,(savedmeta.visionmode==1));
+					var alreadysent = Object.values(interrogation_db).some(item => item.imghash === imghash);
+					if(!alreadysent && document.getElementById("zoomedaudio"))
+					{
+						transcribe_audio_file(imghash,(txt)=>{
+							if(txt)
+							{
+								savedmeta.desc = txt;
+								update_clicked_image(imghash);
+							}
+						});
+					}
+				}
+			}
+			else //images
+			{
+				if(!savedmeta.desc && (savedmeta.visionmode==1 || savedmeta.visionmode==2))
+				{
+					//request a new interrogation
+					var alreadysent = Object.values(interrogation_db).some(item => item.imghash === imghash);
+					if(!alreadysent && document.getElementById("zoomedimg"))
+					{
+						let b64 = document.getElementById("zoomedimg").src;
+						interrogate_new_image(b64,imghash,(savedmeta.visionmode==1));
+					}
 				}
 			}
 			update_clicked_image(imghash);
@@ -18066,6 +18123,7 @@ Current version indicated by LITEVER below.
 			}
 			let togglebtn = `<select class="form-control" id="aivisionmode" style="display:inline;height:24px;width: 140px; padding: 2px; margin: 3px; font-size:12px;" onchange="toggle_ai_vision(\'`+imghash+`\')">
 								<option value="0">Disabled</option>
+								<option value="2">Transcribe (Local)</option>
 								<option value="3">Multimodal Audio</option>
 							</select>`;
 			document.getElementById("zoomedimgdesc").innerHTML = `
@@ -18093,7 +18151,7 @@ Current version indicated by LITEVER below.
 			let userinput = getInputBoxValue();
 			if(userinput.trim()!="" && document.getElementById("zoomedimg"))
 			{
-				var sentence = userinput.trim().substring(0, 380);
+				var sentence = userinput.trim().substring(0, 540);
 				let b64 = document.getElementById("zoomedimg").src;
 				do_manual_gen_image(sentence, b64);
 				document.getElementById("zoomedimgcontainer").classList.add("hidden");
@@ -19005,7 +19063,7 @@ Current version indicated by LITEVER below.
 				{
 					if(!localsettings.allow_continue_chat)
 					{
-						pending_context_preinjection =  get_instructendplaceholder();
+						pending_context_preinjection = get_instructendplaceholder();
 
 						if(localsettings.inject_timestamps)
 						{
@@ -19059,9 +19117,23 @@ Current version indicated by LITEVER below.
 		reader.onloadend = function () {
 			const arrayBuffer = reader.result;
 			const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-			audioContext.decodeAudioData(arrayBuffer, function (buffer) {
+			audioContext.decodeAudioData(arrayBuffer, function (obuf) {
+				resampleAudioBuffer(obuf,22050,(buffer)=>{
 				const samplefreq = buffer.sampleRate;
-				const samples = buffer.getChannelData(0); // mono
+				const numberOfChannels = buffer.numberOfChannels;
+				const length = buffer.length;
+				//first, mix all down into mono
+				let samples = new Float32Array(length);
+				for (let channel = 0; channel < numberOfChannels; channel++) {
+					const channelData = buffer.getChannelData(channel);
+					for (let i = 0; i < length; i++) {
+						samples[i] += channelData[i];
+					}
+				}
+				for (let i = 0; i < length; i++) {
+					samples[i] /= numberOfChannels;
+				}
+
 				const durationInSeconds = buffer.duration;
 				const mp3encoder = new lamejs.Mp3Encoder(1, samplefreq, 40); // mono, 16kHz, 40kbps
 				const sampleBlockSize = 1152; //can be anything but make it a multiple of 576 to make encoders life easier
@@ -19069,13 +19141,14 @@ Current version indicated by LITEVER below.
 				for (let i = 0; i < samples.length; i += sampleBlockSize) {
 					let sampleChunk = samples.subarray(i, i + sampleBlockSize);
 
-					// Convert Float32 [-1, 1] to Int16 [-32768, 32767]
-					let int16Buffer = new Int16Array(sampleChunk.length);
+					let buff = new Float32Array(sampleChunk.length);
 					for (let j = 0; j < sampleChunk.length; j++) {
-						let s = Math.max(-1, Math.min(1, sampleChunk[j]));
-						int16Buffer[j] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+						let s = sampleChunk[j];
+						s = s*32767.0;
+						s = Math.max(-32767.0, Math.min(32767.0, s));
+						buff[j] = s;
 					}
-					const mp3buf = mp3encoder.encodeBuffer(int16Buffer);
+					const mp3buf = mp3encoder.encodeBuffer(buff);
 					if (mp3buf.length > 0) {
 						mp3Data.push(new Uint8Array(mp3buf));
 					}
@@ -19091,6 +19164,7 @@ Current version indicated by LITEVER below.
 					onDone(mp3Base64,durationInSeconds);
 				};
 				fileReader.readAsDataURL(mp3Blob);
+			});
 			}, function (err) {
 				console.log("Audio decode failed.");
 				onDone(null,null);
@@ -20000,7 +20074,12 @@ Current version indicated by LITEVER below.
 						let data = foundmeta.data;
 						if(foundmeta.desc && (foundmeta.visionmode==1||foundmeta.visionmode==2))
 						{
-							return "\n(Attached Image: " + foundmeta.desc + ")\n";
+							if(foundmeta.type==1)//audio
+							{
+								return "\n(Attached Audio: " + foundmeta.desc + ")\n";
+							}else{
+								return "\n(Attached Image: " + foundmeta.desc + ")\n";
+							}
 						}
 						else if(foundmeta.visionmode==3)
 						{
@@ -20296,6 +20375,7 @@ Current version indicated by LITEVER below.
 				fulltxt = replace_placeholders(fulltxt,true);
 			}
 
+			let alreadyShowedStreaming = false; //sometimes, streaming is injected inline to preserve indentation
 
 			if(localsettings.opmode==4 && !inEditMode)
 			{
@@ -20325,6 +20405,36 @@ Current version indicated by LITEVER below.
 				{
 					let curr = instruct_turns[i];
 					let currmsg = curr.msg;
+
+					//in some special cases, add streaming text inline
+					let allow_cont_prev_turn = (localsettings.opmode==4 || (localsettings.opmode==3 && localsettings.allow_continue_chat));
+					if(i>0 && (i==instruct_turns.length-1) && curr.myturn==false && currmsg && allow_cont_prev_turn)
+					{
+						//inject into previous turn, only for instruct OR continuechat
+						currmsg += `<span class="color_yellow pending_text">${escape_html(pending_context_preinjection) + format_streaming_text(escape_html(synchro_pending_stream))}</span>`;
+						alreadyShowedStreaming = true;
+					}
+
+					//apply stylization to time tags
+					if(localsettings.inject_timestamps && localsettings.instruct_has_markdown)
+					{
+						currmsg = currmsg.replace(/(\[\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2} [AP]M\])/g, "$1\n");
+					}
+					if(localsettings.inject_chatnames_instruct && localsettings.instruct_has_markdown)
+					{
+						let m_name = localsettings.chatname + ": ";
+						currmsg = replaceAll(currmsg, m_name, `<b>` + escape_html(m_name) + `</b>`);
+						let m_opps = localsettings.chatopponent.split("||$||");
+						for(let i=0;i<m_opps.length;++i)
+						{
+							if(m_opps[i] && m_opps[i].trim()!="")
+							{
+								let m_opp = m_opps[i] + ": ";
+								currmsg = replaceAll(currmsg, m_opp, `<b>` + escape_html(m_opp) + `</b>`);
+							}
+						}
+					}
+
 					if(localsettings.instruct_has_markdown && (localsettings.render_streaming_markdown||synchro_pending_stream==""||(i+1)<instruct_turns.length))
 					{
 						//if a list has a starttag on the same line, add a newline before it
@@ -20351,26 +20461,7 @@ Current version indicated by LITEVER below.
 					}
 				}
 
-				//apply stylization to time tags
-				if(localsettings.inject_timestamps && localsettings.instruct_has_markdown)
-				{
-					fulltxt = fulltxt.replace(/(\[\d{1,2}\/\d{1,2}\/\d{4}, \d{1,2}:\d{2} [AP]M\])/g, "$1\n");
-				}
-				if(localsettings.inject_chatnames_instruct && localsettings.instruct_has_markdown)
-				{
-					let m_name = localsettings.chatname + ": ";
-					fulltxt = replaceAll(fulltxt, m_name, `<b>` + escape_html(m_name) + `</b>`);
-					let m_opps = localsettings.chatopponent.split("||$||");
-					for(let i=0;i<m_opps.length;++i)
-					{
-						if(m_opps[i] && m_opps[i].trim()!="")
-						{
-							let m_opp = m_opps[i] + ": ";
-							fulltxt = replaceAll(fulltxt, m_opp, `<b>` + escape_html(m_opp) + `</b>`);
-						}
-					}
-				}
-			}else{
+			} else {
 				fulltxt = replaceAll(fulltxt, get_instruct_starttag(true), `%SclStg%`+escape_html(get_instruct_starttag(true))+`%SpnEtg%`);
 				fulltxt = replaceAll(fulltxt, get_instruct_endtag(true), `%SclStg%`+escape_html(get_instruct_endtag(true))+`%SpnEtg%`);
 				if (localsettings.separate_end_tags) {
@@ -20408,7 +20499,7 @@ Current version indicated by LITEVER below.
 			{
 				if(!document.getElementById("allowediting").checked && !fulltxt.startsWith("\n"))
 				{
-					fulltxt = "\n"+fulltxt;
+					fulltxt = "\n" + fulltxt;
 				}
 
 				//for chat mode, highlight our name in blue and opponent in red
@@ -20428,7 +20519,6 @@ Current version indicated by LITEVER below.
 					return `<span class="`+colormap[onametrim]+`">` + oname + `</span>`;
 				});
 				fulltxt = replaceAll(fulltxt,m_name, `<span class="color_blue">` + escape_html(m_name) + `</span>`);
-
 			}
 
 			//for adventure mode, highlight our actions in green
@@ -20438,8 +20528,8 @@ Current version indicated by LITEVER below.
 				});
 			}
 
-			//streaming display
-			if(synchro_pending_stream!="" && waiting_for_tool_call==0)
+			//streaming display for all other cases
+			if(!alreadyShowedStreaming && synchro_pending_stream!="" && waiting_for_tool_call==0)
 			{
 				fulltxt += `<span class="color_yellow pending_text">${escape_html(pending_context_preinjection) + format_streaming_text(escape_html(synchro_pending_stream))}</span>`;
 			}
@@ -20761,7 +20851,7 @@ Current version indicated by LITEVER below.
 	function render_corpo_welcome()
 	{
 		return `<div class='corpowelcome'>
-			<img src="`+niko_square+`" style="height:80px;width:auto;padding:10px;border-radius: 20%;"/>
+			<img src="${corpo_greeter_square}" style="height:80px;width:auto;padding:10px;border-radius: 20%;"/>
 			<p>How can I help you today?</p>
 			${(welcome!=""?`<br><div class='corpowelcomesmall'><em>${escape_html(welcome)}</em></div>`:``)}
 			</div>`;
@@ -20830,7 +20920,9 @@ Current version indicated by LITEVER below.
 					chatunits.push({
 					msg:curr,
 					myturn:myturnchat,
-					unlabelled:unlabelled_turns});
+					unlabelled_name:unlabelled_turns,
+					unlabelled_img:unlabelled_turns
+				});
 				}
 				unlabelled_turns = false;
 			}
@@ -21313,7 +21405,15 @@ Current version indicated by LITEVER below.
 		for(var i=0;i<chatunits.length;++i)
 		{
 			let curr = chatunits[i];
-			curr = repack_postprocess_turn(curr, countmap);
+			if(corpo_editing_turn != i)
+			{
+				curr = repack_postprocess_turn(curr, countmap); //change whole object
+			}
+			else
+			{
+				let reshaped = repack_postprocess_turn(JSON.parse(JSON.stringify(curr)), countmap);
+				curr.name = reshaped.name; //only change name
+			}
 
 			let resendbtn = ((curr.myturn && i<chatunits.length-1)?`<button type="button" class="btn btn-primary corpoeditbtn" style="float:right;" onclick="corpo_edit_chunk_resend(${i})">Resend</button>`:``);
 			let bodypart = (corpo_editing_turn == i ?
@@ -21512,7 +21612,9 @@ Current version indicated by LITEVER below.
 						name:localsettings.chatopponent,
 						msg:tempfullsearchable.split(localsettings.chatopponent+": ")[1],
 						myturn:myturnchat,
-						unlabelled: false});
+						unlabelled_name: false,
+						unlabelled_img: false
+					});
 				}
 				else
 				{
@@ -21521,7 +21623,9 @@ Current version indicated by LITEVER below.
 						name:foundself[0].substring(0,foundself[0].length-2),
 						msg:tempfullsearchable.split(foundself[0])[1],
 						myturn:myturnchat,
-						unlabelled: false});
+						unlabelled_name: false,
+						unlabelled_img: false
+					});
 				}
 			}
 			else if(foundopponent != null && foundopponent.length > 0)
@@ -21531,7 +21635,9 @@ Current version indicated by LITEVER below.
 					name:foundopponent[0].substring(0,foundopponent[0].length-2),
 					msg:tempfullsearchable.split(foundopponent[0])[1],
 					myturn:myturnchat,
-					unlabelled: false});
+					unlabelled_name: false,
+					unlabelled_img: false
+					});
 			}else{ //unknown sender, just use existing turn
 				if(chatunits.length==0)
 				{
@@ -21541,7 +21647,9 @@ Current version indicated by LITEVER below.
 						name:"",
 						msg:tempfullsearchable,
 						myturn:myturnchat,
-						unlabelled: true});
+						unlabelled_name: true,
+						unlabelled_img: true
+					});
 					}
 				}
 				else
@@ -23070,7 +23178,7 @@ Current version indicated by LITEVER below.
 		else if(localsettings.opmode==1)
 		{
 			//aesthetic mode repacks story as one big chunk
-			chatunits = [{"msg":input, "myturn":false, "unlabelled":true}];
+			chatunits = [{"msg":input, "myturn":false, "unlabelled_name":true, "unlabelled_img":true}];
 		}
 		else
 		{
@@ -23082,7 +23190,16 @@ Current version indicated by LITEVER below.
 		let pendstream = "";
 		if (synchro_pending_stream != "" && !isPreview) {
 			pendstream = escape_html(pending_context_preinjection) + format_streaming_text(escape_html(synchro_pending_stream));
-			chatunits.push({"msg":`<span class='pending_text'>${pendstream}</span>`,"myturn":false});
+			let allow_cont_prev_turn = (localsettings.opmode==4 || (localsettings.opmode==3 && localsettings.allow_continue_chat));
+			if(chatunits.length>0 && chatunits[chatunits.length-1].myturn==false && chatunits[chatunits.length-1].msg && allow_cont_prev_turn)
+			{
+				//inject into previous turn, only for instruct OR continuechat
+				chatunits[chatunits.length-1].msg += `<span class='pending_text'>${pendstream}</span>`;
+			}
+			else
+			{
+				chatunits.push({"msg":`<span class='pending_text'>${pendstream}</span>`,"myturn":false,"unlabelled_name":true, "unlabelled_img":false});
+			}
 		}
 		for(var i=0;i<chatunits.length;++i)
 		{
@@ -23122,9 +23239,12 @@ Current version indicated by LITEVER below.
 			let showavatar = true;
 
 			//adventure and story has no names or avatars, also handle unlabelled first turns for chat/instruct
-			if((i == 0 && !curr.myturn && curr.unlabelled) || (localsettings.opmode==2 || localsettings.opmode==1))
+			if((!curr.myturn && curr.unlabelled_name) || (localsettings.opmode==2 || localsettings.opmode==1))
 			{
 				namepart = "";
+			}
+			if((!curr.myturn && curr.unlabelled_img) || (localsettings.opmode==2 || localsettings.opmode==1))
+			{
 				showavatar = false;
 			}
 
@@ -23821,6 +23941,59 @@ Current version indicated by LITEVER below.
 			resultsContainer.appendChild(btn);
 		});
 	}
+
+	//queries the decensoring prefix from a second OAI compatible endpoint and returns a string to add to our main request
+	const FetchDecensoredPrefix = asyncRunner(function* (submit_payload, endpoint_url, modelused, num_tokens)
+	{
+		let oaiheaders = {
+			'Content-Type': 'application/json'
+		};
+		if (custom_oai_key!="" && custom_oai_key!=dummy_api_key) {
+			oaiheaders['Authorization'] = 'Bearer ' + custom_oai_key;
+		}
+
+		let scaled_rep_pen = 0;
+		if(submit_payload.params.presence_penalty > 0)
+		{
+			scaled_rep_pen = submit_payload.params.presence_penalty;
+		}else{
+			//original range between 1 and 3, scale to 0 and 2
+			scaled_rep_pen = (submit_payload.params.rep_pen - 1.0);
+		}
+		let oai_payload =
+		{
+			"prompt": submit_payload.prompt,
+			"max_tokens": num_tokens,
+			"model": modelused,
+			"temperature": submit_payload.params.temperature,
+			"top_p": submit_payload.params.top_p,
+			"stream": false,
+			"presence_penalty": scaled_rep_pen,
+			"stop": get_stop_sequences().slice(0, 4)
+		};
+
+		return fetch(endpoint_url, {
+			method: 'POST',
+			headers: oaiheaders,
+			body: JSON.stringify(oai_payload),
+			referrerPolicy: 'no-referrer',
+		})
+		.then((response) => response.json())
+		.then((data) => {
+			let reply = "";
+			if (data.choices != null && data.choices.length > 0) {
+				let dch = data.choices[0];
+				if (dch.text) {
+					reply = dch.text;
+				}
+			}
+			return reply;
+		})
+		.catch((error) => {
+			console.error('Error:', error);
+			return "";
+		});
+	});
 	</script>
 
 </head>
@@ -24787,6 +24960,19 @@ Current version indicated by LITEVER below.
 								<div title="Top N Sigma. 0 to deactivate. Range 0 to 5." class="justifyleft settingsmall" style="width:100%">T.NSigma</div>
 								<div class="justifyleft settingsmall" style="width:100%">
 								<input title="Top N Sigma. 0 to deactivate. Range 0 to 5." class="settinglabel miniinput" type="text" inputmode="decimal" placeholder="0" value="0" id="nsigma"></div>
+							</div>
+							<div class="settinglabel settingcell">
+								<div class="justifyleft settingsmall" style="width:100%">2ndEpSampleQty <span class="helpicon">?<span class="helptext">
+									If enabled, sample N tokens from a second OpenAI Compatible endpoint first before a request. This can be useful for jailbreak purposes.</span></span></div>
+								<div class="justifyleft settingsmall" style="width:100%;">
+									<div style="display:flex;">
+										<div class="settingsmall" style="margin-left:2px;margin-right:2px;margin-top:4px;" title="Number of tokens to sample">Qty: </div> <input title="Token Quantity" class="settinglabel miniinput" type="text" inputmode="decimal" placeholder="0" value="0" id="second_ep_qty">
+										<div class="settingsmall" style="margin-left:2px;margin-right:2px;margin-top:4px;" title="Model name to use">Model: </div> <input title="Model Name" class="settinglabel miniinput" type="text" inputmode="decimal" placeholder="(Blank Model)" value="" id="second_ep_model">
+									</div>
+									<div style="display:flex; margin-top:2px">
+										<div class="settingsmall" style="margin-left:2px;margin-right:2px;margin-top:4px;" title="URL of second OpenAI Compatible Endpoint">Url: </div> <input title="Second OpenAI Compatible URL" class="settinglabel miniinput" type="text" placeholder="(Full /v1/completions URL)" value="" id="second_ep_url">
+									</div>
+								</div>
 							</div>
 						</div>
 					</div>
