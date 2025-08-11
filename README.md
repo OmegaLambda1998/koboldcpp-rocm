@@ -148,20 +148,20 @@ Then you should be able to make the .exe file with this command:
 On other Linux distributions, ROCm development files come with copies of LLVM tools like clang and clang++ in `/opt/rocm`, which is what the makefile expects. On Fedora, however, the ROCm packages do not do that. By running `hipcc --version` you can find out where the LLVM tools are, which should be located at `/usr/lib64/llvm17/bin`. Because of this, you need to make symbolic links:
 - `/opt/rocm/llvm/bin/clang` to `/usr/lib64/llvm17/bin/clang`
 - `/opt/rocm/llvm/bin/clang++` to `/usr/lib64/llvm17/bin/clang++`
+- `/opt/rocm/llvm/bin/amdgpu-arch` to `/usr/lib64/rocm/llvm/bin/amdgpu-arch` (for AMDGPU users)
 
 This can be done with the following snippet:
 ```sh
 sudo mkdir /opt/rocm/llvm &&
 sudo mkdir /opt/rocm/llvm/bin &&
 sudo ln -s /usr/lib64/llvm17/bin/clang /opt/rocm/llvm/bin/clang &&
-sudo ln -s /usr/lib64/llvm17/bin/clang++ /opt/rocm/llvm/bin/clang++
+sudo ln -s /usr/lib64/llvm17/bin/clang++ /opt/rocm/llvm/bin/clang++ &&
+sudo ln -s /usr/lib64/rocm/llvm/bin/amdgpu-arch /opt/rocm/llvm/bin/amdgpu-arch
 ```
 
-The packages you need are `rocblas-devel` and `hipblas-devel`, installed with `sudo dnf install rocblas-devel hipblas-devel`. All ROCm-related packages in the Fedora repositories may be found [here](https://fedoraproject.org/wiki/SIGs/HC#Package_status).
+The packages you need are `rocblas-devel`, `hipblas-devel` and `rocm-llvm` installed with `sudo dnf install rocblas-devel hipblas-devel rocm-llvm`. All ROCm-related packages in the Fedora repositories may be found [here](https://fedoraproject.org/wiki/SIGs/HC#Package_status).
 
-This will allow the program to be compiled, but if you have RX 6700 XT then you also need to run `make` with `GPU_TARGETS=gfx1030`, so `make LLAMA_HIPBLAS=1 GPU_TARGETS=gfx1030 -j$(nproc)`. Otherwise koboldcpp will crash with a CUDA-related error after loading the model into memory. You can check which `GPU_TARGETS` you need with `rocminfo | grep "Name" | grep "gfx"`, which will give you the `gfxXXXX` platform information.
-
-With these changes, the program should be readily compilable on Fedora 40 and Fedora 39. You can now follow the rest of the instructions in the README.
+With these changes, the program should be readily compilable on Fedora 40 and Fedora 39 or later. You can now follow the rest of the instructions in the README.
 
 ## Arch Linux Packages
 There are some community made AUR packages (Maintained by @AlpinDale) available: [HIPBLAS](https://aur.archlinux.org/packages/koboldcpp-hipblas) and [CUBLAS](https://aur.archlinux.org/packages/koboldcpp-cuda).
