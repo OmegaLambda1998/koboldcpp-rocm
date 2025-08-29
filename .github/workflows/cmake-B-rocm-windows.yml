@@ -110,13 +110,76 @@ jobs:
           7z x rocblas-6.2.0.dll.7z -aoa
           robocopy "C:\Program Files\AMD\ROCm\6.1\bin\rocblas" .\rocblas /MIR 
           python -m pip install customtkinter
-          PyInstaller --noconfirm --onefile --collect-all customtkinter --clean --console --icon ".\niko.ico" --add-data "./OpenCL.dll;." --add-data "./klite.embd;." --add-data "./kcpp_docs.embd;." --add-data="./kcpp_sdui.embd;." --add-data="./taesd.embd;." --add-data="./taesd_xl.embd;." --add-data "./koboldcpp_default.dll;." --add-data "./koboldcpp_failsafe.dll;." --add-data "./koboldcpp_noavx2.dll;." --add-data "./koboldcpp_clblast.dll;." --add-data "./koboldcpp_clblast_noavx2.dll;." --add-data "./koboldcpp_vulkan_noavx2.dll;." --add-data "./clblast.dll;." --add-data "./koboldcpp_vulkan.dll;." --add-data "./rwkv_vocab.embd;." --add-data "./rwkv_world_vocab.embd;." --add-data "D:\a\koboldcpp-rocm\koboldcpp-rocm\build\bin\koboldcpp_hipblas.dll;." --add-data "./rocblas.dll;." --add-data "./rocblas;." --add-data "C:/Windows/System32/msvcp140.dll;." --add-data "C:/Windows/System32/vcruntime140_1.dll;." "./koboldcpp.py" -n "koboldcpp_rocm_b2.exe"
-
+          PyInstaller --noconfirm --onefile --clean --console `
+            --icon ".\niko.ico" `
+            --collect-all customtkinter `
+            --add-data "./OpenCL.dll;." `
+            --add-data "./klite.embd;." `
+            --add-data "./kcpp_docs.embd;." `
+            --add-data "./kcpp_sdui.embd;." `
+            --add-data "./taesd.embd;." `
+            --add-data "./taesd_xl.embd;." `
+            --add-data "./taesd_f.embd;." `
+            --add-data "./taesd_3.embd;." `
+            --add-data "./koboldcpp_default.dll;." `
+            --add-data "./koboldcpp_failsafe.dll;." `
+            --add-data "./koboldcpp_noavx2.dll;." `
+            --add-data "./koboldcpp_clblast.dll;." `
+            --add-data "./koboldcpp_clblast_noavx2.dll;." `
+            --add-data "./koboldcpp_clblast_failsafe.dll;." `
+            --add-data "./koboldcpp_vulkan_noavx2.dll;." `
+            --add-data "./clblast.dll;." `
+            --add-data "./koboldcpp_vulkan.dll;." `
+            --add-data "./rwkv_vocab.embd;." `
+            --add-data "./rwkv_world_vocab.embd;." `
+            --add-data "./kokoro_ipa.embd;." `
+            --add-data "D:\a\koboldcpp-rocm\koboldcpp-rocm\build\bin\koboldcpp_hipblas.dll;." `
+            --add-data "./rocblas.dll;." `
+            --add-data "./rocblas;." `
+            --add-data "./kcpp_adapters;./kcpp_adapters" `
+            --add-data "./json_to_gbnf.py;." `
+            --add-data "./LICENSE.md;." `
+            --add-data "./MIT_LICENSE_GGML_SDCPP_LLAMACPP_ONLY.md;." `
+            --add-data "C:/Windows/System32/msvcp140.dll;." `
+            --add-data "C:/Windows/System32/vcruntime140_1.dll;." `
+            --version-file "./version.txt" `
+            "./koboldcpp.py" -n "koboldcpp_rocm_b2.exe"
 
       - name: Create ZIP archive
         run: |
           Set-Location 'D:\a\koboldcpp-rocm\koboldcpp-rocm'
-          Compress-Archive -Path D:\a\koboldcpp-rocm\koboldcpp-rocm\niko.ico, D:\a\koboldcpp-rocm\koboldcpp-rocm\OpenCL.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\klite.embd, D:\a\koboldcpp-rocm\koboldcpp-rocm\kcpp_docs.embd, D:\a\koboldcpp-rocm\koboldcpp-rocm\kcpp_sdui.embd, D:\a\koboldcpp-rocm\koboldcpp-rocm\taesd.embd, D:\a\koboldcpp-rocm\koboldcpp-rocm\taesd_xl.embd, D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_default.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_failsafe.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_noavx2.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_clblast.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_clblast_noavx2.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_vulkan_noavx2.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\clblast.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_vulkan.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\rwkv_vocab.embd, D:\a\koboldcpp-rocm\koboldcpp-rocm\rwkv_world_vocab.embd, D:\a\koboldcpp-rocm\koboldcpp-rocm\build\bin\koboldcpp_hipblas.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\rocblas.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\rocblas, C:/Windows/System32/msvcp140.dll, C:/Windows/System32/vcruntime140_1.dll, D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp.py -DestinationPath koboldcpp_rocm_b2_files.zip
+          Compress-Archive -Path D:\a\koboldcpp-rocm\koboldcpp-rocm\niko.ico, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\OpenCL.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\klite.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\kcpp_docs.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\kcpp_sdui.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\taesd.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\taesd_xl.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\taesd_f.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\taesd_3.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_default.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_failsafe.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_noavx2.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_clblast.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_clblast_noavx2.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_clblast_failsafe.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_vulkan_noavx2.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\clblast.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp_vulkan.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\rwkv_vocab.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\rwkv_world_vocab.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\kokoro_ipa.embd, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\build\bin\koboldcpp_hipblas.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\rocblas.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\rocblas, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\kcpp_adapters, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\json_to_gbnf.py, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\LICENSE.md, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\MIT_LICENSE_GGML_SDCPP_LLAMACPP_ONLY.md, `
+                               C:/Windows/System32/msvcp140.dll, `
+                               C:/Windows/System32/vcruntime140_1.dll, `
+                               D:\a\koboldcpp-rocm\koboldcpp-rocm\koboldcpp.py `
+                               -DestinationPath koboldcpp_rocm_b2_files.zip
           copy "koboldcpp_rocm_b2_files.zip" D:\a\koboldcpp-rocm\koboldcpp-rocm\dist
 
 

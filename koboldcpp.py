@@ -54,6 +54,7 @@ default_visionmaxres = 1024
 net_save_slots = 12
 savestate_limit = 3 #3 savestate slots
 default_vae_tile_threshold = 768
+default_native_ctx = 16384
 
 # abuse prevention
 stop_token_max = 256
@@ -63,7 +64,7 @@ dry_seq_break_max = 128
 extra_images_max = 4
 
 # global vars
-KcppVersion = "1.97.4.yr0-ROCm"
+KcppVersion = "1.98.1.yr0-ROCm"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -194,6 +195,7 @@ class load_model_inputs(ctypes.Structure):
                 ("gpulayers", ctypes.c_int),
                 ("rope_freq_scale", ctypes.c_float),
                 ("rope_freq_base", ctypes.c_float),
+                ("overridenativecontext", ctypes.c_int),
                 ("moe_experts", ctypes.c_int),
                 ("moecpu", ctypes.c_int),
                 ("no_bos_token", ctypes.c_bool),
@@ -242,6 +244,7 @@ class generation_inputs(ctypes.Structure):
                 ("sampler_len", ctypes.c_int),
                 ("allow_eos_token", ctypes.c_bool),
                 ("bypass_eos_token", ctypes.c_bool),
+                ("tool_call_fix", ctypes.c_bool),
                 ("render_special", ctypes.c_bool),
                 ("stream_sse", ctypes.c_bool),
                 ("grammar", ctypes.c_char_p),
@@ -278,6 +281,8 @@ class sd_load_model_inputs(ctypes.Structure):
                 ("threads", ctypes.c_int),
                 ("quant", ctypes.c_int),
                 ("flash_attention", ctypes.c_bool),
+                ("diffusion_conv_direct", ctypes.c_bool),
+                ("vae_conv_direct", ctypes.c_bool),
                 ("taesd", ctypes.c_bool),
                 ("tiled_vae_threshold", ctypes.c_int),
                 ("t5xxl_filename", ctypes.c_char_p),
@@ -350,6 +355,7 @@ class tts_generation_inputs(ctypes.Structure):
     _fields_ = [("prompt", ctypes.c_char_p),
                 ("speaker_seed", ctypes.c_int),
                 ("audio_seed", ctypes.c_int),
+                ("custom_speaker_voice", ctypes.c_char_p),
                 ("custom_speaker_text", ctypes.c_char_p),
                 ("custom_speaker_data", ctypes.c_char_p)]
 
@@ -695,6 +701,14 @@ def tryparsefloat(value,fallback):
         return float(value)
     except ValueError:
         return fallback
+
+def replace_last_in_string(text: str, match: str, replacement: str) -> str:
+    if match == "":
+        return text
+    head, sep, tail = text.rpartition(match)
+    if sep == "":
+        return text  # old not found
+    return head + replacement + tail
 
 def is_incomplete_utf8_sequence(byte_seq): #note, this will only flag INCOMPLETE sequences, corrupted ones will be ignored.
     try:
@@ -1147,10 +1161,11 @@ def autoset_gpu_layers(ctxsize, sdquanted, bbs, qkv_level): #shitty algo to dete
                             showmultigpuwarning = False
                             print("Multi-Part GGUF detected. Layer estimates may not be very accurate - recommend setting layers manually.")
                         fsize *= total_parts
+            sdquantsavings = sdquanted
             if modelfile_extracted_meta[3] > 1024*1024*1024*5: #sdxl tax
-                mem -= 1024*1024*1024*(6 if sdquanted else 9)
+                mem -= 1024*1024*1024*(9 - sdquantsavings * 1.5) # 9, 7.5, 6
             elif modelfile_extracted_meta[3] > 1024*1024*512: #normal sd tax
-                mem -= 1024*1024*1024*(3.25 if sdquanted else 4.25)
+                mem -= 1024*1024*1024*(4.25 - sdquantsavings * 0.5) # 4.25, 3.75, 3.25
             if modelfile_extracted_meta[4] > 1024*1024*10: #whisper tax
                 mem -= max(350*1024*1024,modelfile_extracted_meta[4]*1.5)
             if modelfile_extracted_meta[5] > 1024*1024*10: #mmproj tax
@@ -1399,11 +1414,17 @@ def load_model(model_filename):
     inputs.blasbatchsize = args.blasbatchsize
     inputs.forceversion = args.forceversion
     inputs.gpulayers = args.gpulayers
-    inputs.rope_freq_scale = args.ropeconfig[0]
-    if len(args.ropeconfig)>1:
-        inputs.rope_freq_base = args.ropeconfig[1]
-    else:
+    if args.overridenativecontext and args.overridenativecontext>0:
+        inputs.overridenativecontext = args.overridenativecontext
+        inputs.rope_freq_scale = 0
         inputs.rope_freq_base = 10000
+    else:
+        inputs.overridenativecontext = 0
+        inputs.rope_freq_scale = args.ropeconfig[0]
+        if len(args.ropeconfig)>1:
+            inputs.rope_freq_base = args.ropeconfig[1]
+        else:
+            inputs.rope_freq_base = 10000
 
     for n in range(tensor_split_max):
         if args.tensor_split and n < len(args.tensor_split):
@@ -1484,6 +1505,7 @@ def generate(genparams, stream_flag=False):
     banned_strings = genparams.get('banned_strings', []) # SillyTavern uses that name
     banned_tokens = genparams.get('banned_tokens', banned_strings)
     bypass_eos_token = genparams.get('bypass_eos', False)
+    tool_call_fix = genparams.get('using_openai_tools', False)
     custom_token_bans = genparams.get('custom_token_bans', '')
 
     for tok in custom_token_bans.split(','):
@@ -1542,6 +1564,7 @@ def generate(genparams, stream_flag=False):
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not ban_eos_token
     inputs.bypass_eos_token = bypass_eos_token
+    inputs.tool_call_fix = tool_call_fix
     inputs.render_special = render_special
     if mirostat in (1, 2):
         inputs.mirostat = mirostat
@@ -1646,24 +1669,46 @@ def generate(genparams, stream_flag=False):
                     outstr = outstr[:sindex]
         return {"text":outstr,"status":ret.status,"stopreason":ret.stopreason,"prompt_tokens":ret.prompt_tokens, "completion_tokens": ret.completion_tokens}
 
+sd_convdirect_choices = ['off', 'vaeonly', 'full']
+
+def sd_convdirect_option(value):
+    if not value:
+        value = ''
+    value = value.lower()
+    if value in ['disabled', 'disable', 'none', 'off', '0', '']:
+        return 'off'
+    elif value in ['vae', 'vaeonly']:
+        return 'vaeonly'
+    elif value in ['enabled', 'enable', 'on', 'full']:
+        return 'full'
+    raise argparse.ArgumentTypeError(f"Invalid sdconvdirect option \"{value}\". Must be one of {sd_convdirect_choices}.")
+
+sd_quant_choices = ['off','q8','q4']
+
+def sd_quant_option(value):
+    try:
+        lvl = sd_quant_choices.index(value)
+        return lvl
+    except Exception:
+        return 0
 
 def sd_load_model(model_filename,vae_filename,lora_filename,t5xxl_filename,clipl_filename,clipg_filename,photomaker_filename):
     global args
     inputs = sd_load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
     thds = args.threads
-    quant = 0
 
     if args.sdthreads and args.sdthreads > 0:
         sdt = int(args.sdthreads)
         if sdt > 0:
             thds = sdt
-    if args.sdquant:
-        quant = 1
 
     inputs.threads = thds
-    inputs.quant = quant
-    inputs.flash_attention = args.flashattention
+    inputs.quant = args.sdquant
+    inputs.flash_attention = args.sdflashattention
+    sdconvdirect = sd_convdirect_option(args.sdconvdirect)
+    inputs.diffusion_conv_direct = sdconvdirect == 'full'
+    inputs.vae_conv_direct = sdconvdirect in ['vaeonly', 'full']
     inputs.taesd = True if args.sdvaeauto else False
     inputs.tiled_vae_threshold = args.sdtiledvae
     inputs.vae_filename = vae_filename.encode("UTF-8")
@@ -1836,8 +1881,8 @@ def whisper_generate(genparams):
 def tts_load_model(ttc_model_filename,cts_model_filename):
     global args
     inputs = tts_load_model_inputs()
-    inputs.ttc_model_filename = ttc_model_filename.encode("UTF-8")
-    inputs.cts_model_filename = cts_model_filename.encode("UTF-8")
+    inputs.ttc_model_filename = ttc_model_filename.encode("UTF-8") if ttc_model_filename else "".encode("UTF-8")
+    inputs.cts_model_filename = cts_model_filename.encode("UTF-8") if cts_model_filename else "".encode("UTF-8")
     inputs.gpulayers = (999 if args.ttsgpu else 0)
     inputs.flash_attention =  args.flashattention
     thds = args.threads
@@ -1890,6 +1935,7 @@ def tts_generate(genparams):
     else:
         voice = simple_lcg_hash(voicestr.strip()) if voicestr else 1
     inputs = tts_generation_inputs()
+    inputs.custom_speaker_voice = normalized_voice.encode("UTF-8")
     inputs.prompt = prompt.encode("UTF-8")
     inputs.speaker_seed = voice
     aseed = -1
@@ -1916,10 +1962,10 @@ def embeddings_load_model(model_filename):
     inputs = embeddings_load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
     inputs.gpulayers = (999 if args.embeddingsgpu else 0)
-    inputs.flash_attention = False
+    inputs.flash_attention = args.flashattention
     inputs.threads = args.threads
     inputs.use_mmap = args.usemmap
-    inputs.embeddingsmaxctx = args.embeddingsmaxctx
+    inputs.embeddingsmaxctx = (args.embeddingsmaxctx if args.embeddingsmaxctx else args.contextsize) # for us to clamp to contextsize if embeddingsmaxctx unspecified
     inputs = set_backend_props(inputs)
     ret = handle.embeddings_load_model(inputs)
     return ret
@@ -2445,6 +2491,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
             user_message_end = adapter_obj.get("user_end", "")
             assistant_message_start = adapter_obj.get("assistant_start", "\n### Response:\n")
             assistant_message_end = adapter_obj.get("assistant_end", "")
+            assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
             tools_message_start = adapter_obj.get("tools_start", "\nTool Results:\n")
             tools_message_end = adapter_obj.get("tools_end", "")
             images_added = []
@@ -2557,7 +2604,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 elif message['role'] == "tool":
                     messages_string += tools_message_end
 
-            messages_string += assistant_message_start
+            messages_string += assistant_message_gen
             genparams["prompt"] = messages_string
             if len(images_added)>0:
                 genparams["images"] = images_added
@@ -2578,7 +2625,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
         adapter_obj = {} if chatcompl_adapter is None else chatcompl_adapter
         user_message_start = adapter_obj.get("user_start", "### Instruction:")
         assistant_message_start = adapter_obj.get("assistant_start", "### Response:")
-        genparams["prompt"] = f"{user_message_start} In one sentence, write a descriptive caption for this image.\n{assistant_message_start}"
+        assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
+        genparams["prompt"] = f"{user_message_start} In one sentence, write a descriptive caption for this image.\n{assistant_message_gen}"
 
     elif api_format==6:
         detokstr = ""
@@ -2586,12 +2634,13 @@ ws ::= | " " | "\n" [ \t]{0,20}
         adapter_obj = {} if chatcompl_adapter is None else chatcompl_adapter
         user_message_start = adapter_obj.get("user_start", "\n\n### Instruction:\n")
         assistant_message_start = adapter_obj.get("assistant_start", "\n\n### Response:\n")
+        assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
         try:
             detokstr = detokenize_ids(tokids)
         except Exception as e:
             utfprint("Ollama Context Error: " + str(e))
         ollamasysprompt = genparams.get('system', "")
-        ollamabodyprompt = f"{detokstr}{user_message_start}{genparams.get('prompt', '')}{assistant_message_start}"
+        ollamabodyprompt = f"{detokstr}{user_message_start}{genparams.get('prompt', '')}{assistant_message_gen}"
         ollamaopts = genparams.get('options', {})
         if genparams.get('stop',[]) is not None:
             genparams["stop_sequence"] = genparams.get('stop', [])
@@ -2630,7 +2679,13 @@ ws ::= | " " | "\n" [ \t]{0,20}
         user_message_end = adapter_obj.get("user_end", "")
         assistant_message_start = adapter_obj.get("assistant_start", "\n### Response:\n")
         assistant_message_end = adapter_obj.get("assistant_end", "")
+        assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
         if isinstance(prompt, str): #needed because comfy SD uses same field name
+            if assistant_message_gen and assistant_message_gen!=assistant_message_start: #replace final output tag with unspaced (gen) version if exists
+                if prompt.rstrip().endswith("{{[OUTPUT]}}"):
+                    prompt = replace_last_in_string(prompt,"{{[OUTPUT]}}",assistant_message_gen)
+                elif assistant_message_start and prompt.rstrip().endswith(assistant_message_start):
+                    prompt = replace_last_in_string(prompt, assistant_message_start, assistant_message_gen)
             if "{{[INPUT_END]}}" in prompt or "{{[OUTPUT_END]}}" in prompt:
                 prompt = prompt.replace("{{[INPUT]}}", user_message_start)
                 prompt = prompt.replace("{{[OUTPUT]}}", assistant_message_start)
@@ -2697,8 +2752,8 @@ def LaunchWebbrowser(target_url, failedmsg):
 ### we are intentionally NOT using flask, because we want MINIMAL dependencies
 #################################################################
 class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
-    sys_version = ""
-    server_version = "ConcedoLlamaForKoboldServer"
+    sys_version = "1"
+    server_version = "KoboldCppServer"
 
     def __init__(self, addr, port):
         self.addr = addr
@@ -2721,8 +2776,8 @@ class KcppServerRequestHandler(http.server.SimpleHTTPRequestHandler):
                 if boundary:
                     fparts = body.split(boundary)
                     for fpart in fparts:
-                        detected_upload_filename = re.findall(r'Content-Disposition.*name="file"; filename="(.*)"', fpart.decode('utf-8',errors='ignore'))
-                        detected_upload_filename_comfy = re.findall(r'Content-Disposition.*name="image"; filename="(.*)"', fpart.decode('utf-8',errors='ignore'))
+                        detected_upload_filename = re.findall(r'Content-Disposition[^;]*;\s*name=(?:"file"|file)\s*;\s*filename=(?:"([^"]+)"|([^\s";]+))', fpart.decode('utf-8',errors='ignore'),flags=re.IGNORECASE)
+                        detected_upload_filename_comfy = re.findall(r'Content-Disposition[^;]*;\s*name=(?:"image"|image)\s*;\s*filename=(?:"([^"]+)"|([^\s";]+))', fpart.decode('utf-8',errors='ignore'),flags=re.IGNORECASE)
                         if detected_upload_filename and len(detected_upload_filename)>0:
                             utfprint(f"Detected uploaded file: {detected_upload_filename[0]}")
                             file_content_start = fpart.find(b'\r\n\r\n') + 4  # Position after headers
@@ -3979,7 +4034,7 @@ Change Mode<br>
                     trunc_len = 32000
 
                 printablegenparams_raw = truncate_long_json(genparams,trunc_len)
-                utfprint("\nInput: " + json.dumps(printablegenparams_raw),1)
+                utfprint("\nInput: " + json.dumps(printablegenparams_raw,ensure_ascii=False),1)
 
                 # transform genparams (only used for text gen) first
                 genparams = transform_genparams(genparams, api_format)
@@ -4474,8 +4529,8 @@ def show_gui():
 
     tabcontent = {}
     # slider data
-    blasbatchsize_values = ["-1", "16", "32", "64", "128", "256", "512", "1024", "2048"]
-    blasbatchsize_text = ["Don't Batch BLAS", "16","32","64","128","256","512","1024","2048"]
+    blasbatchsize_values = ["-1","16","32","64","128","256","512","1024","2048","4096"]
+    blasbatchsize_text = ["Don't Batch BLAS","16","32","64","128","256","512","1024","2048","4096"]
     contextsize_text = ["256", "512", "1024", "2048", "3072", "4096", "6144", "8192", "10240", "12288", "14336", "16384", "20480", "24576", "28672", "32768", "40960", "49152", "57344", "65536", "81920", "98304", "114688", "131072"]
     antirunopts = [opt.replace("Use ", "") for lib, opt in lib_option_pairs if opt not in runopts]
     quantkv_text = ["F16 (Off)","8-Bit","4-Bit"]
@@ -4531,12 +4586,14 @@ def show_gui():
     flashattention_var = ctk.IntVar(value=0)
     context_var = ctk.IntVar()
     customrope_var = ctk.IntVar()
+    manualrope_var = ctk.IntVar()
     customrope_scale = ctk.StringVar(value="1.0")
     customrope_base = ctk.StringVar(value="10000")
+    customrope_nativectx = ctk.StringVar(value=str(default_native_ctx))
     chatcompletionsadapter_var = ctk.StringVar(value="AutoGuess")
     moeexperts_var = ctk.StringVar(value=str(-1))
     moecpu_var = ctk.StringVar(value=str(0))
-    defaultgenamt_var = ctk.StringVar(value=str(512))
+    defaultgenamt_var = ctk.StringVar(value=str(640))
     nobostoken_var = ctk.IntVar(value=0)
     override_kv_var = ctk.StringVar(value="")
     override_tensors_var = ctk.StringVar(value="")
@@ -4580,12 +4637,14 @@ def show_gui():
     sd_clipl_var = ctk.StringVar()
     sd_clipg_var = ctk.StringVar()
     sd_photomaker_var = ctk.StringVar()
+    sd_flash_attention_var = ctk.IntVar(value=0)
     sd_vaeauto_var = ctk.IntVar(value=0)
     sd_tiled_vae_var = ctk.StringVar(value=str(default_vae_tile_threshold))
+    sd_convdirect_var = ctk.StringVar(value=str(sd_convdirect_choices[0]))
     sd_clamped_var = ctk.StringVar(value="0")
     sd_clamped_soft_var = ctk.StringVar(value="0")
     sd_threads_var = ctk.StringVar(value=str(default_threads))
-    sd_quant_var = ctk.IntVar(value=0)
+    sd_quant_var = ctk.StringVar(value=sd_quant_choices[0])
 
     whisper_model_var = ctk.StringVar()
     tts_model_var = ctk.StringVar()
@@ -4645,6 +4704,18 @@ def show_gui():
             temp.bind("<Enter>", lambda event: show_tooltip(event, tooltiptxt))
             temp.bind("<Leave>", hide_tooltip)
         return temp
+
+    def makelabelcombobox(parent, text, variable=None, row=0, width=50, command=None, padx=8,tooltiptxt="", values=[], labelpadx=8):
+        label = makelabel(parent, text, row, 0, tooltiptxt, padx=labelpadx)
+        label=None
+        combo = ctk.CTkComboBox(parent, variable=variable, width=width, values=values, state="readonly")
+        if command is not None and variable is not None:
+            variable.trace_add("write", command)
+        combo.grid(row=row,column=0, padx=padx, sticky="nw")
+        if tooltiptxt!="":
+            combo.bind("<Enter>", lambda event: show_tooltip(event, tooltiptxt))
+            combo.bind("<Leave>", hide_tooltip)
+        return combo, label
 
     def makelabel(parent, text, row, column=0, tooltiptxt="", columnspan=1, padx=8):
         temp = ctk.CTkLabel(parent, text=text)
@@ -5121,7 +5192,7 @@ def show_gui():
         pass
 
     def changed_gpulayers_estimate(*args):
-        predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),(sd_quant_var.get()==1),int(blasbatchsize_values[int(blas_size_var.get())]),(quantkv_var.get() if flashattention_var.get()==1 else 0))
+        predicted_gpu_layers = autoset_gpu_layers(int(contextsize_text[context_var.get()]),sd_quant_option(sd_quant_var.get()),int(blasbatchsize_values[int(blas_size_var.get())]),(quantkv_var.get() if flashattention_var.get()==1 else 0))
         max_gpu_layers = (f"/{modelfile_extracted_meta[1][0]+3}" if (modelfile_extracted_meta and modelfile_extracted_meta[1] and modelfile_extracted_meta[1][0]!=0) else "")
         index = runopts_var.get()
         gpu_be = (index == "Use Vulkan" or index == "Use Vulkan (Old CPU)" or index == "Use CLBlast" or index == "Use CLBlast (Old CPU)" or index == "Use CLBlast (Older CPU)" or index == "Use CUDA" or index == "Use hipBLAS (ROCm)")
@@ -5400,16 +5471,31 @@ def show_gui():
     context_var.trace_add("write", changed_gpulayers_estimate)
     makelabelentry(tokens_tab, "Default Gen Amt:", defaultgenamt_var, row=20, padx=120, singleline=True, tooltip="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.")
 
+    nativectx_entry, nativectx_label = makelabelentry(tokens_tab, "Override Native Context:", customrope_nativectx, row=23, padx=146, singleline=True, tooltip="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.")
     customrope_scale_entry, customrope_scale_label = makelabelentry(tokens_tab, "RoPE Scale:", customrope_scale, row=23, padx=100, singleline=True, tooltip="For Linear RoPE scaling. RoPE frequency scale.")
     customrope_base_entry, customrope_base_label = makelabelentry(tokens_tab, "RoPE Base:", customrope_base, row=24, padx=100, singleline=True, tooltip="For NTK Aware Scaling. RoPE frequency base.")
     def togglerope(a,b,c):
-        items = [customrope_scale_label, customrope_scale_entry,customrope_base_label, customrope_base_entry]
-        for idx, item in enumerate(items):
-            if customrope_var.get() == 1:
-                item.grid()
-            else:
+        if customrope_var.get() == 1:
+            manualropebox.grid()
+            enabled_items = [customrope_scale_label, customrope_scale_entry,customrope_base_label, customrope_base_entry]
+            disabled_items = [nativectx_entry,nativectx_label]
+            for idx, item in enumerate(enabled_items):
+                if manualrope_var.get() == 1:
+                    item.grid()
+                else:
+                    item.grid_remove()
+            for idx, item in enumerate(disabled_items):
+                if manualrope_var.get() == 0:
+                    item.grid()
+                else:
+                    item.grid_remove()
+        else:
+            disabled_items = [manualropebox, nativectx_entry,nativectx_label, customrope_scale_label, customrope_scale_entry, customrope_base_label, customrope_base_entry]
+            for idx, item in enumerate(disabled_items):
                 item.grid_remove()
-    makecheckbox(tokens_tab,  "Custom RoPE Config", variable=customrope_var, row=22, command=togglerope,tooltiptxt="Override the default RoPE configuration with custom RoPE scaling.")
+    manualropebox = makecheckbox(tokens_tab, "Manual Rope Scale", variable=manualrope_var, row=22, command=togglerope, padx=166, tooltiptxt="Set RoPE base and scale manually.")
+
+    makecheckbox(tokens_tab, "Custom RoPE Config", variable=customrope_var, row=22, command=togglerope,tooltiptxt="Override the default RoPE configuration with custom RoPE scaling.")
     makecheckbox(tokens_tab, "Use FlashAttention", flashattention_var, 28, command=toggleflashattn,  tooltiptxt="Enable flash attention for GGUF models.")
     noqkvlabel = makelabel(tokens_tab,"(Note: QuantKV works best with flash attention)",28,0,"Only K cache can be quantized, and performance can suffer.\nIn some cases, it might even use more VRAM when doing a full offload.",padx=160)
     noqkvlabel.configure(text_color="#ff5555")
@@ -5512,7 +5598,7 @@ def show_gui():
     makelabelentry(images_tab, "(Soft):", sd_clamped_soft_var, 4, 50, padx=290,singleline=True,tooltip="Square image size restriction, to protect the server against memory crashes.\nAllows width-height tradeoffs, eg. 640 allows 640x640 and 512x768\nLeave at 0 for the default value: 832 for SD1.5/SD2, 1024 otherwise.",labelpadx=250)
     makelabelentry(images_tab, "Image Threads:" , sd_threads_var, 8, 50,padx=290,singleline=True,tooltip="How many threads to use during image generation.\nIf left blank, uses same value as threads.")
     sd_model_var.trace_add("write", gui_changed_modelfile)
-    makecheckbox(images_tab, "Compress Weights (Saves Memory)", sd_quant_var, 10,tooltiptxt="Quantizes the SD model weights to save memory. May degrade quality.")
+    makelabelcombobox(images_tab, "Compress Weights (Saves Memory): ", sd_quant_var, 10, width=60, padx=220, labelpadx=8, tooltiptxt="Quantizes the SD model weights to save memory.\nHigher levels save more memory, and cause more quality degradation.", values=sd_quant_choices)
     sd_quant_var.trace_add("write", changed_gpulayers_estimate)
 
     makefileentry(images_tab, "Image LoRA (safetensors/gguf):", "Select SD lora file",sd_lora_var, 20, width=280, singlecol=True, filetypes=[("*.safetensors *.gguf", "*.safetensors *.gguf")],tooltiptxt="Select a .safetensors or .gguf SD LoRA model file to be loaded. Should be unquantized!")
@@ -5534,20 +5620,22 @@ def show_gui():
                 sdvaeitem1.grid()
                 sdvaeitem2.grid()
                 sdvaeitem3.grid()
-    makecheckbox(images_tab, "Use TAE SD (AutoFix Broken VAE)", sd_vaeauto_var, 42,command=toggletaesd,tooltiptxt="Replace VAE with TAESD. May fix bad VAE.")
+    makecheckbox(images_tab, "TAE SD (AutoFix Broken VAE)", sd_vaeauto_var, 42,command=toggletaesd,tooltiptxt="Replace VAE with TAESD. May fix bad VAE.")
+    makelabelcombobox(images_tab, "Conv2D Direct:", sd_convdirect_var, row=42, labelpadx=220, padx=310, width=90, tooltiptxt="Use Conv2D Direct operation. May save memory or improve performance.\nMight crash if not supported by the backend.\n", values=sd_convdirect_choices)
     makelabelentry(images_tab, "VAE Tiling Threshold:", sd_tiled_vae_var, 44, 50, padx=144,singleline=True,tooltip="Enable VAE Tiling for images above this size, to save memory.\nSet to 0 to disable VAE tiling.")
+    makecheckbox(images_tab, "SD Flash Attention", sd_flash_attention_var, 46, tooltiptxt="Enable Flash Attention for image diffusion. May save memory or improve performance.")
 
     # audio tab
     audio_tab = tabcontent["Audio"]
     makefileentry(audio_tab, "Whisper Model (Speech-To-Text):", "Select Whisper .bin Model File", whisper_model_var, 1, width=280, filetypes=[("*.bin","*.bin")], tooltiptxt="Select a Whisper .bin model file on disk to be loaded for Voice Recognition.")
     whisper_model_var.trace_add("write", gui_changed_modelfile)
-    makefileentry(audio_tab, "OuteTTS Model (Text-To-Speech Required):", "Select OuteTTS GGUF Model File", tts_model_var, 3, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a OuteTTS GGUF model file on disk to be loaded for Narration.")
+    makefileentry(audio_tab, "TTS Model (Text-To-Speech):", "Select TTS GGUF Model File", tts_model_var, 3, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a TTS GGUF model file on disk to be loaded for Narration.")
     tts_model_var.trace_add("write", gui_changed_modelfile)
-    makelabelentry(audio_tab, "OuteTTS Threads:" , tts_threads_var, 5, 50,padx=290,singleline=True,tooltip="How many threads to use during TTS generation.\nIf left blank, uses same value as threads.")
-    makelabelentry(audio_tab, "OuteTTS Max Tokens:" , ttsmaxlen_var, 7, 50,padx=290,singleline=True,tooltip="Max allowed audiotokens to generate per TTS request.")
+    makelabelentry(audio_tab, "TTS Threads:" , tts_threads_var, 5, 50,padx=290,singleline=True,tooltip="How many threads to use during TTS generation.\nIf left blank, uses same value as threads.")
+    makelabelentry(audio_tab, "TTS Max Tokens:" , ttsmaxlen_var, 7, 50,padx=290,singleline=True,tooltip="Max allowed audiotokens to generate per TTS request.")
     makecheckbox(audio_tab, "TTS Use GPU", ttsgpu_var, 9, 0,tooltiptxt="Uses the GPU for TTS.")
     ttsgpu_var.trace_add("write", gui_changed_modelfile)
-    makefileentry(audio_tab, "WavTokenizer Model (Text-To-Speech Required):", "Select WavTokenizer GGUF Model File", wavtokenizer_var, 11, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a WavTokenizer GGUF model file on disk to be loaded for Narration.")
+    makefileentry(audio_tab, "WavTokenizer Model (Required for OuteTTS):", "Select WavTokenizer GGUF Model File", wavtokenizer_var, 11, width=280, filetypes=[("*.gguf","*.gguf")], tooltiptxt="Select a WavTokenizer GGUF model file on disk to be loaded for Narration.")
     wavtokenizer_var.trace_add("write", gui_changed_modelfile)
 
     admin_tab = tabcontent["Admin"]
@@ -5714,12 +5802,18 @@ def show_gui():
         args.forceversion = 0 if version_var.get()=="" else int(version_var.get())
         args.contextsize = int(contextsize_text[context_var.get()])
         if customrope_var.get()==1:
-            args.ropeconfig = [float(customrope_scale.get()),float(customrope_base.get())]
+            if manualrope_var.get()==1:
+                args.ropeconfig = [float(customrope_scale.get()),float(customrope_base.get())]
+                args.overridenativecontext = 0
+            else:
+                args.ropeconfig = [0.0, 10000.0]
+                args.overridenativecontext = int(customrope_nativectx.get())
         else:
             args.ropeconfig = [0.0, 10000.0]
+            args.overridenativecontext = 0
         args.moeexperts = int(moeexperts_var.get()) if moeexperts_var.get()!="" else -1
         args.moecpu = int(moecpu_var.get()) if moecpu_var.get()!="" else 0
-        args.defaultgenamt = int(defaultgenamt_var.get()) if defaultgenamt_var.get()!="" else 512
+        args.defaultgenamt = int(defaultgenamt_var.get()) if defaultgenamt_var.get()!="" else 640
         args.nobostoken = (nobostoken_var.get()==1)
         args.enableguidance = (enableguidance_var.get()==1)
         args.overridekv = None if override_kv_var.get() == "" else override_kv_var.get()
@@ -5773,6 +5867,8 @@ def show_gui():
         if sd_model_var.get() != "":
             args.sdmodel = sd_model_var.get()
 
+        if sd_flash_attention_var.get()==1:
+            args.sdflashattention = True
         args.sdthreads = (0 if sd_threads_var.get()=="" else int(sd_threads_var.get()))
         args.sdclamped = (0 if int(sd_clamped_var.get())<=0 else int(sd_clamped_var.get()))
         args.sdclampedsoft = (0 if int(sd_clamped_soft_var.get())<=0 else int(sd_clamped_soft_var.get()))
@@ -5785,6 +5881,7 @@ def show_gui():
             args.sdvae = ""
             if sd_vae_var.get() != "":
                 args.sdvae = sd_vae_var.get()
+        args.sdconvdirect = sd_convdirect_option(sd_convdirect_var.get())
         if sd_t5xxl_var.get() != "":
             args.sdt5xxl = sd_t5xxl_var.get()
         if sd_clipl_var.get() != "":
@@ -5793,8 +5890,7 @@ def show_gui():
             args.sdclipg = sd_clipg_var.get()
         if sd_photomaker_var.get() != "":
             args.sdphotomaker = sd_photomaker_var.get()
-        if sd_quant_var.get()==1:
-            args.sdquant = True
+        args.sdquant = sd_quant_option(sd_quant_var.get())
         if sd_lora_var.get() != "":
             args.sdlora = sd_lora_var.get()
             args.sdloramult = float(sd_loramult_var.get())
@@ -5811,7 +5907,7 @@ def show_gui():
             args.embeddingsmaxctx = (0 if embeddings_ctx_var.get()=="" else int(embeddings_ctx_var.get()))
         args.embeddingsgpu = (embeddings_gpu_var.get()==1)
 
-        if tts_model_var.get() != "" and wavtokenizer_var.get() != "":
+        if tts_model_var.get() != "":
             args.ttsthreads = (0 if tts_threads_var.get()=="" else int(tts_threads_var.get()))
             args.ttsmodel = tts_model_var.get()
             args.ttswavtokenizer = wavtokenizer_var.get()
@@ -5920,13 +6016,24 @@ def show_gui():
             blas_threads_var.set("")
         if "contextsize" in dict and dict["contextsize"]:
             context_var.set(contextsize_text.index(str(dict["contextsize"])))
-        if "ropeconfig" in dict and dict["ropeconfig"] and len(dict["ropeconfig"])>1:
+        if "overridenativecontext" in dict and dict["overridenativecontext"]>0:
+            customrope_var.set(1)
+            manualrope_var.set(0)
+            customrope_nativectx.set(str(dict["overridenativecontext"]))
+        elif "ropeconfig" in dict and dict["ropeconfig"] and len(dict["ropeconfig"])>1:
+            customrope_nativectx.set(default_native_ctx)
             if dict["ropeconfig"][0]>0:
                 customrope_var.set(1)
+                manualrope_var.set(1)
                 customrope_scale.set(str(dict["ropeconfig"][0]))
                 customrope_base.set(str(dict["ropeconfig"][1]))
             else:
                 customrope_var.set(0)
+                manualrope_var.set(0)
+        else:
+            customrope_nativectx.set(default_native_ctx)
+            customrope_var.set(0)
+            manualrope_var.set(0)
         if "moeexperts" in dict and dict["moeexperts"]:
             moeexperts_var.set(dict["moeexperts"])
         if "moecpu" in dict and dict["moecpu"]:
@@ -5994,7 +6101,9 @@ def show_gui():
         sd_clamped_var.set(int(dict["sdclamped"]) if ("sdclamped" in dict and dict["sdclamped"]) else 0)
         sd_clamped_soft_var.set(int(dict["sdclampedsoft"]) if ("sdclampedsoft" in dict and dict["sdclampedsoft"]) else 0)
         sd_threads_var.set(str(dict["sdthreads"]) if ("sdthreads" in dict and dict["sdthreads"]) else str(default_threads))
-        sd_quant_var.set(1 if ("sdquant" in dict and dict["sdquant"]) else 0)
+        sd_quant_var.set(sd_quant_choices[(dict["sdquant"] if ("sdquant" in dict and dict["sdquant"]>=0 and dict["sdquant"]<len(sd_quant_choices)) else 0)])
+        sd_flash_attention_var.set(1 if ("sdflashattention" in dict and dict["sdflashattention"]) else 0)
+        sd_convdirect_var.set(sd_convdirect_option(dict.get("sdconvdirect")))
         sd_vae_var.set(dict["sdvae"] if ("sdvae" in dict and dict["sdvae"]) else "")
         sd_t5xxl_var.set(dict["sdt5xxl"] if ("sdt5xxl" in dict and dict["sdt5xxl"]) else "")
         sd_clipl_var.set(dict["sdclipl"] if ("sdclipl" in dict and dict["sdclipl"]) else "")
@@ -6034,7 +6143,7 @@ def show_gui():
         export_vars()
         savdict = json.loads(json.dumps(args.__dict__))
         file_type = [("KoboldCpp Settings", "*.kcpps")]
-        filename = zentk_asksaveasfilename(filetypes=file_type, defaultextension=".kcpps")
+        filename = zentk_asksaveasfilename(filetypes=file_type, defaultextension=".kcpps",title="Save kcpps settings config file")
         if not filename:
             return
         filenamestr = str(filename).strip()
@@ -6483,7 +6592,7 @@ def convert_invalid_args(args):
         if dict["sdconfig"] and len(dict["sdconfig"]) > 2:
             dict["sdthreads"] = int(dict["sdconfig"][2])
         if dict["sdconfig"] and len(dict["sdconfig"]) > 3:
-            dict["sdquant"] = (True if dict["sdconfig"][3]=="quant" else False)
+            dict["sdquant"] = (2 if dict["sdconfig"][3]=="quant" else 0)
     if "hordeconfig" in dict and dict["hordeconfig"] and dict["hordeconfig"][0]!="":
         dict["hordemodelname"] = dict["hordeconfig"][0]
         if len(dict["hordeconfig"]) > 1:
@@ -6509,6 +6618,8 @@ def convert_invalid_args(args):
             dict["model_param"] = model_value[0]  # Take the first file in the list
     if "sdnotile" in dict and "sdtiledvae" not in dict:
         dict["sdtiledvae"] = (0 if (dict["sdnotile"]) else default_vae_tile_threshold) # convert legacy option
+    if 'sdquant' in dict and type(dict['sdquant']) is bool:
+        dict['sdquant'] = 2 if dict['sdquant'] else 0
     return args
 
 def setuptunnel(global_memory, has_sd):
@@ -7584,8 +7695,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                 exit_with_error(3,"Could not load whisper model: " + whispermodel)
 
     #handle tts model
-    if args.ttsmodel and args.ttsmodel!="" and args.ttswavtokenizer and args.ttswavtokenizer!="":
-        if not os.path.exists(args.ttsmodel) or not os.path.exists(args.ttswavtokenizer):
+    if args.ttsmodel and args.ttsmodel!="":
+        if not os.path.exists(args.ttsmodel) or (args.ttswavtokenizer and args.ttswavtokenizer!="" and not os.path.exists(args.ttswavtokenizer)):
             if args.ignoremissing:
                 print("Ignoring missing TTS model files!")
                 args.ttsmodel = None
@@ -7597,7 +7708,8 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
             ttsmodelpath = args.ttsmodel
             ttsmodelpath = os.path.abspath(ttsmodelpath)
             wavtokpath = args.ttswavtokenizer
-            wavtokpath = os.path.abspath(wavtokpath)
+            if wavtokpath:
+                wavtokpath = os.path.abspath(wavtokpath)
             loadok = tts_load_model(ttsmodelpath,wavtokpath)
             print("Load TTS Model OK: " + str(loadok))
             if not loadok:
@@ -7843,7 +7955,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
                             file.seek(0, 2)
                             if file.tell() == 0: #empty file
                                 file.write("Timestamp,Backend,Layers,Model,MaxCtx,GenAmount,ProcessingTime,ProcessingSpeed,GenerationTime,GenerationSpeed,TotalTime,Output,Flags")
-                            file.write(f"\n{datetimestamp},{libname},{args.gpulayers},{benchmodel},{benchmaxctx},{benchlen},{t_pp:.2f},{s_pp:.2f},{t_gen:.2f},{s_gen:.2f},{(t_pp+t_gen):.2f},{result},{benchflagstr}")
+                            file.write(f"\n{datetimestamp},{libname},{args.gpulayers},{benchmodel},{benchmaxctx},{benchlen},{t_pp:.2f},{s_pp:.2f},{t_gen:.2f},{s_gen:.2f},{(t_pp+t_gen):.2f},{result},\"{benchflagstr}\"")
                     except Exception as e:
                         print(f"Error writing benchmark to file: {e}")
                 if global_memory and using_gui_launcher and not save_to_file:
@@ -7889,7 +8001,6 @@ if __name__ == '__main__':
     parser.add_argument("--host", metavar=('[ipaddr]'), help="Host IP to listen on. If this flag is not set, all routable interfaces are accepted.", default="")
     parser.add_argument("--launch", help="Launches a web browser when load is completed.", action='store_true')
     parser.add_argument("--config", metavar=('[filename]'), help="Load settings from a .kcpps file. Other arguments will be ignored", type=str, nargs=1)
-
     parser.add_argument("--threads", metavar=('[threads]'), help="Use a custom number of threads if specified. Otherwise, uses an amount based on CPU cores", type=int, default=get_default_threads())
     compatgroup = parser.add_mutually_exclusive_group()
     compatgroup.add_argument("--usecuda", "--usecublas", "--usehipblas", help="Use CUDA for GPU Acceleration. Requires CUDA. Enter a number afterwards to select and use 1 GPU. Leaving no number will use all GPUs.", nargs='*',metavar=('[lowvram|normal] [main GPU ID] [mmq|nommq] [rowsplit]'), choices=['normal', 'lowvram', '0', '1', '2', '3', 'all', 'mmq', 'nommq', 'rowsplit'])
@@ -7898,7 +8009,7 @@ if __name__ == '__main__':
     compatgroup.add_argument("--usecpu", help="Do not use any GPU acceleration (CPU Only)", action='store_true')
     parser.add_argument("--contextsize", help="Controls the memory allocated for maximum context size, only change if you need more RAM for big contexts. (default 8192).",metavar=('[256 to 262144]'), type=check_range(int,256,262144), default=8192)
     parser.add_argument("--gpulayers", help="Set number of layers to offload to GPU when using GPU. Requires GPU. Set to -1 to try autodetect, set to 0 to disable GPU offload.",metavar=('[GPU layers]'), nargs='?', const=1, type=int, default=-1)
-    parser.add_argument("--tensor_split", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
+    parser.add_argument("--tensor_split", "--tensorsplit", help="For CUDA and Vulkan only, ratio to split tensors across multiple GPUs, space-separated list of proportions, e.g. 7 3", metavar=('[Ratios]'), type=float, nargs='+')
     parser.add_argument("--checkforupdates", help="Checks KoboldCpp-ROCm's release page on GitHub using HTTPS to see if there's a new update available.", action='store_true')
 
     #more advanced params
@@ -7906,14 +8017,15 @@ if __name__ == '__main__':
     advparser.add_argument("--version", help="Prints version and exits.", action='store_true')
     advparser.add_argument("--analyze", metavar=('[filename]'), help="Reads the metadata, weight types and tensor names in any GGUF file.", default="")
     advparser.add_argument("--maingpu", help="Only used in a multi-gpu setup. Sets the index of the main GPU that will be used.",metavar=('[Device ID]'), type=int, default=-1)
-    advparser.add_argument("--ropeconfig", help="If set, uses customized RoPE scaling from configured frequency scale and frequency base (e.g. --ropeconfig 0.25 10000). Otherwise, uses NTK-Aware scaling set automatically based on context size. For linear rope, simply set the freq-scale and ignore the freq-base",metavar=('[rope-freq-scale]', '[rope-freq-base]'), default=[0.0, 10000.0], type=float, nargs='+')
-    advparser.add_argument("--blasbatchsize", help="Sets the batch size used in BLAS processing (default 512). Setting it to -1 disables BLAS mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,16,32,64,128,256,512,1024,2048], default=512)
+    advparser.add_argument("--blasbatchsize", help="Sets the batch size used in BLAS processing (default 512). Setting it to -1 disables BLAS mode, but keeps other benefits like GPU offload.", type=int,choices=[-1,16,32,64,128,256,512,1024,2048,4096], default=512)
     advparser.add_argument("--blasthreads", help="Use a different number of threads during BLAS if specified. Otherwise, has the same value as --threads",metavar=('[threads]'), type=int, default=0)
     advparser.add_argument("--lora", help="GGUF models only, applies a lora file on top of model.", metavar=('[lora_filename]'), nargs='+')
     advparser.add_argument("--loramult", metavar=('[amount]'), help="Multiplier for the Text LORA model to be applied.", type=float, default=1.0)
     advparser.add_argument("--noshift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     advparser.add_argument("--nofastforward", help="If set, do not attempt to fast forward GGUF context (always reprocess). Will also enable noshift", action='store_true')
     advparser.add_argument("--useswa", help="If set, allows Sliding Window Attention (SWA) KV Cache, which saves memory but cannot be used with context shifting.", action='store_true')
+    advparser.add_argument("--ropeconfig", help="If set, uses customized RoPE scaling from configured frequency scale and frequency base (e.g. --ropeconfig 0.25 10000). Otherwise, uses NTK-Aware scaling set automatically based on context size. For linear rope, simply set the freq-scale and ignore the freq-base",metavar=('[rope-freq-scale]', '[rope-freq-base]'), default=[0.0, 10000.0], type=float, nargs='+')
+    advparser.add_argument("--overridenativecontext", help="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.",metavar=('[trained context]'), type=int, default=0)
     compatgroup3 = advparser.add_mutually_exclusive_group()
     compatgroup3.add_argument("--usemmap", help="If set, uses mmap to load model.", action='store_true')
     advparser.add_argument("--usemlock", help="Enables mlock, preventing the RAM used to load the model from being paged out. Not usually recommended.", action='store_true')
@@ -7956,7 +8068,7 @@ if __name__ == '__main__':
     advparser.add_argument("--nomodel", help="Allows you to launch the GUI alone, without selecting any model.", action='store_true')
     advparser.add_argument("--moeexperts", metavar=('[num of experts]'), help="How many experts to use for MoE models (default=follow gguf)", type=int, default=-1)
     advparser.add_argument("--moecpu", metavar=('[layers affected]'), help="Keep the Mixture of Experts (MoE) weights of the first N layers in the CPU. If no value is provided, applies to all layers.", nargs='?', const=999, type=int, default=0)
-    advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,64,8192), default=512)
+    advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,64,8192), default=640)
     advparser.add_argument("--nobostoken", help="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.", action='store_true')
     advparser.add_argument("--enableguidance", help="Enables the use of Classifier-Free-Guidance, which allows the use of negative prompts. Has performance and memory impact.", action='store_true')
     advparser.add_argument("--maxrequestsize", metavar=('[size in MB]'), help="Specify a max request payload size. Any requests to the server larger than this size will be dropped. Do not change if unsure.", type=int, default=32)
@@ -7983,11 +8095,13 @@ if __name__ == '__main__':
     sdparsergroup.add_argument("--sdclipl", metavar=('[filename]'), help="Specify a Clip-L safetensors model for use in SD3 or Flux. Leave blank if prebaked or unused.", default="")
     sdparsergroup.add_argument("--sdclipg", metavar=('[filename]'), help="Specify a Clip-G safetensors model for use in SD3. Leave blank if prebaked or unused.", default="")
     sdparsergroup.add_argument("--sdphotomaker", metavar=('[filename]'), help="PhotoMaker is a model that allows face cloning. Specify a PhotoMaker safetensors model which will be applied replacing img2img. SDXL models only. Leave blank if unused.", default="")
+    sdparsergroup.add_argument("--sdflashattention", help="Enables Flash Attention for image generation.", action='store_true')
+    sdparsergroup.add_argument("--sdconvdirect", help="Enables Conv2D Direct. May improve performance or reduce memory usage. Might crash if not supported by the backend. Can be 'off' (default) to disable, 'full' to turn it on for all operations, or 'vaeonly' to enable only for the VAE.", type=sd_convdirect_option, choices=sd_convdirect_choices, default=sd_convdirect_choices[0])
     sdparsergroupvae = sdparsergroup.add_mutually_exclusive_group()
     sdparsergroupvae.add_argument("--sdvae", metavar=('[filename]'), help="Specify an image generation safetensors VAE which replaces the one in the model.", default="")
     sdparsergroupvae.add_argument("--sdvaeauto", help="Uses a built-in VAE via TAE SD, which is very fast, and fixed bad VAEs.", action='store_true')
     sdparsergrouplora = sdparsergroup.add_mutually_exclusive_group()
-    sdparsergrouplora.add_argument("--sdquant", help="If specified, loads the model quantized to save memory.", action='store_true')
+    sdparsergrouplora.add_argument("--sdquant",  metavar=('[quantization level 0/1/2]'), help="If specified, loads the model quantized to save memory. 0=off, 1=q8, 2=q4", type=int, choices=[0,1,2], nargs="?", const=2, default=0)
     sdparsergrouplora.add_argument("--sdlora", metavar=('[filename]'), help="Specify an image generation LORA safetensors model to be applied.", default="")
     sdparsergroup.add_argument("--sdloramult", metavar=('[amount]'), help="Multiplier for the image LORA model to be applied.", type=float, default=1.0)
     sdparsergroup.add_argument("--sdtiledvae", metavar=('[maxres]'), help="Adjust the automatic VAE tiling trigger for images above this size. 0 disables vae tiling.", type=int, default=default_vae_tile_threshold)
@@ -7995,7 +8109,7 @@ if __name__ == '__main__':
     whisperparsergroup.add_argument("--whispermodel", metavar=('[filename]'), help="Specify a Whisper .bin model to enable Speech-To-Text transcription.", default="")
 
     ttsparsergroup = parser.add_argument_group('TTS Narration Commands')
-    ttsparsergroup.add_argument("--ttsmodel", metavar=('[filename]'), help="Specify the OuteTTS Text-To-Speech GGUF model.", default="")
+    ttsparsergroup.add_argument("--ttsmodel", metavar=('[filename]'), help="Specify the TTS Text-To-Speech GGUF model.", default="")
     ttsparsergroup.add_argument("--ttswavtokenizer", metavar=('[filename]'), help="Specify the WavTokenizer GGUF model.", default="")
     ttsparsergroup.add_argument("--ttsgpu", help="Use the GPU for TTS.", action='store_true')
     ttsparsergroup.add_argument("--ttsmaxlen", help="Limit number of audio tokens generated with TTS.",  type=int, default=default_ttsmaxlen)

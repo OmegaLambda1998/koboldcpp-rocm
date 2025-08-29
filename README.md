@@ -269,6 +269,7 @@ For more information, be sure to run the program with the `--help` flag, or [che
 - KoboldCpp code and other files are also under the AGPL v3.0 License unless otherwise stated
 - Llama.cpp source repo is at https://github.com/ggml-org/llama.cpp (MIT)
 - Stable-diffusion.cpp source repo is at https://github.com/leejet/stable-diffusion.cpp (MIT)
+- TTS.cpp source repo is at https://github.com/mmwillet/TTS.cpp (MIT)
 - KoboldCpp source repo is at https://github.com/LostRuins/koboldcpp (AGPL)
 - KoboldAI Lite source repo is at https://github.com/LostRuins/lite.koboldai.net (AGPL)
 - For any further enquiries, contact @concedo on discord, or LostRuins on github.

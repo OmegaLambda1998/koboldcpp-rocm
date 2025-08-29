@@ -60,6 +60,7 @@ struct load_model_inputs
     const int gpulayers = 0;
     const float rope_freq_scale = 1.0f;
     const float rope_freq_base = 10000.0f;
+    const int overridenativecontext = 0;
     const int moe_experts = -1;
     const int moecpu = 0;
     const bool no_bos_token = false;
@@ -109,6 +110,7 @@ struct generation_inputs
     const int sampler_len = 0;
     const bool allow_eos_token = false;
     const bool bypass_eos_token = false;
+    const bool tool_call_fix = false; //this prevents close square bracket ] from being generated early.
     const bool render_special = false;
     const bool stream_sse = false;
     const char * grammar = nullptr;
@@ -165,6 +167,8 @@ struct sd_load_model_inputs
     const int threads = 0;
     const int quant = 0;
     const bool flash_attention = false;
+    const bool diffusion_conv_direct = false;
+    const bool vae_conv_direct = false;
     const bool taesd = false;
     const int tiled_vae_threshold = 0;
     const char * t5xxl_filename = nullptr;
@@ -246,6 +250,7 @@ struct tts_generation_inputs
     const char * prompt = nullptr;
     const int speaker_seed = 0;
     const int audio_seed = 0;
+    const char * custom_speaker_voice = "";
     const char * custom_speaker_text = "";
     const char * custom_speaker_data = "";
 };

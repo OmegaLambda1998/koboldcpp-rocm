@@ -106,9 +106,6 @@ if (LLAMA_CUBLAS)
         add_compile_definitions(GGML_USE_CUDA)
         add_compile_definitions(SD_USE_CUDA)
 
-        if (LLAMA_CUDA_F16 OR LLAMA_CUDA_DMMV_F16)
-            add_compile_definitions(GGML_CUDA_F16)
-        endif()
         add_compile_definitions(GGML_CUDA_PEER_MAX_BATCH_SIZE=${LLAMA_CUDA_PEER_MAX_BATCH_SIZE})
 
         # only build minimal quants required for fattn quant kv
@@ -139,17 +136,13 @@ if (LLAMA_CUBLAS)
         # 70 == (assumed) compute capability at which unrolling a loop in mul_mat_q kernels is faster
         # 75 == int8 tensor cores
         # 80 == Ampere, asynchronous data loading, faster tensor core instructions
-        if (LLAMA_CUDA_F16 OR LLAMA_CUDA_DMMV_F16)
-            set(CMAKE_CUDA_ARCHITECTURES "60-virtual;61-virtual;70-virtual;75-virtual;80-virtual") # needed for f16 CUDA intrinsics
+        message("CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
+        if(CUDAToolkit_VERSION VERSION_GREATER 12)
+                add_compile_definitions(GGML_CUDA_USE_GRAPHS) #try enable cuda graphs on cu12 build
+                set(CMAKE_CUDA_ARCHITECTURES "50-virtual;61-virtual;70-virtual;75-virtual;80-virtual") # lowest CUDA 12 standard + lowest for integer intrinsics
         else()
-            message("CUDA Toolkit Version: ${CUDAToolkit_VERSION}")
-            if(CUDAToolkit_VERSION VERSION_GREATER 12)
-                 add_compile_definitions(GGML_CUDA_USE_GRAPHS) #try enable cuda graphs on cu12 build
-                 set(CMAKE_CUDA_ARCHITECTURES "50-virtual;61-virtual;70-virtual;75-virtual;80-virtual") # lowest CUDA 12 standard + lowest for integer intrinsics
-            else()
-                 add_compile_definitions(KCPP_LIMIT_CUDA_MAX_ARCH=750) #will cause issues with ggml_cuda_highest_compiled_arch if removed
-                 set(CMAKE_CUDA_ARCHITECTURES "35-virtual;50-virtual;61-virtual;70-virtual;75-virtual") # lowest CUDA 12 standard + lowest for integer intrinsics
-            endif()
+                add_compile_definitions(KCPP_LIMIT_CUDA_MAX_ARCH=750) #will cause issues with ggml_cuda_highest_compiled_arch if removed
+                set(CMAKE_CUDA_ARCHITECTURES "35-virtual;50-virtual;61-virtual;70-virtual;75-virtual") # lowest CUDA 12 standard + lowest for integer intrinsics
         endif()
     endif()
     message(STATUS "Using CUDA architectures: ${CMAKE_CUDA_ARCHITECTURES}")
@@ -564,7 +557,7 @@ set_target_properties(whisper_adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)
 
 add_library(tts_adapter
             otherarch/tts_adapter.cpp)
-target_include_directories(tts_adapter PUBLIC . ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor ./tools ./common)
+target_include_directories(tts_adapter PUBLIC . ./ggml/include ./ggml/src ./ggml/src/ggml-cpu ./include ./otherarch ./otherarch/tools ./vendor/stb ./vendor ./otherarch/ttscpp/include ./otherarch/ttscpp/src ./tools ./common)
 target_compile_features(tts_adapter PUBLIC cxx_std_17) # don't bump
 target_link_libraries(tts_adapter PRIVATE common2 ggml ${LLAMA_EXTRA_LIBS})
 set_target_properties(tts_adapter PROPERTIES POSITION_INDEPENDENT_CODE ON)

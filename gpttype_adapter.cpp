@@ -128,6 +128,7 @@ static std::vector<std::string> stop_sequence;
 static std::vector<int> special_stop_sequence; //for stop sequences that don't have a string representation
 static std::vector<std::string> banned_tokens;
 static std::vector<int> banned_token_ids;
+static std::vector<int> toolcall_prevented_ids; //temp ban these id for the first 3 tokens generated, to prevent empty replies
 static std::vector<std::string> banned_phrases;
 static std::unordered_multimap<gpt_vocab::id, std::vector<gpt_vocab::id>> dry_sequence_breakers; // Multi-mapping from first token of sequence to tail of sequence (tail is empty for a single token)
 static std::vector<int> dry_repeat_count; // Indexed as last_n_tokens
@@ -2020,7 +2021,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     float rope_freq_scale = 1.0f;
     float rope_freq_base = 10000.0f;
     bool overwriteRope = false;
-    if(inputs.rope_freq_scale>0.0f)
+    if(inputs.rope_freq_scale>0.0f && inputs.overridenativecontext==0)
     {
         rope_freq_scale = inputs.rope_freq_scale;
         rope_freq_base = inputs.rope_freq_base;
@@ -2029,8 +2030,9 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     }
     else
     {
+        const int maxctxtrain = (inputs.overridenativecontext>0?inputs.overridenativecontext:2048);
         //Set freq base for all, including non GGUF. If we are using GGUF, this will be overwritten with more accurate values later.
-        rope_freq_base = CalcGradientAIRopeFreqBase(10000.0f,2048,kcpp_data->n_ctx, GGUFArch::ARCH_DEFAULT);
+        rope_freq_base = CalcGradientAIRopeFreqBase(10000.0f,maxctxtrain,kcpp_data->n_ctx, GGUFArch::ARCH_DEFAULT);
         if(file_format==FileFormat::GGUF_GENERIC)
         {
             printf("Using automatic RoPE scaling for GGUF. If the model has custom RoPE settings, they'll be used directly instead!\n");
@@ -2368,7 +2370,15 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
         {
             //if the model modifes rope in any way, or uses yarn, use the model values. Otherwise, use our automatic ones
             //special exception for llama, which uses auto scale
-            if((llamamodel->hparams.rope_freq_base_train!=10000.0f && llamamodel->hparams.rope_freq_base_train!=500000.0f) ||
+            if(inputs.overridenativecontext > 0)
+            {
+                printf("Automatic RoPE Scaling: Adjust based on override train context of %d.\n",inputs.overridenativecontext);
+                rope_freq_base = CalcGradientAIRopeFreqBase(llamamodel->hparams.rope_freq_base_train, inputs.overridenativecontext, kcpp_data->n_ctx, file_format_meta.model_architecture);
+                llama_ctx_params.rope_freq_base = rope_freq_base;
+                llama_ctx_params.rope_freq_scale = rope_freq_scale;
+                printf("Automatic RoPE Scaling: Using (scale:%.3f, base:%.1f).\n", rope_freq_scale, rope_freq_base);
+            }
+            else if((llamamodel->hparams.rope_freq_base_train!=10000.0f && llamamodel->hparams.rope_freq_base_train!=500000.0f) ||
             llamamodel->hparams.rope_freq_scale_train!=1.0f ||
             llamamodel->hparams.rope_scaling_type_train==2)
             {
@@ -3256,6 +3266,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     }
 
     banned_token_ids.clear();
+    toolcall_prevented_ids.clear();
     if(banned_tokens.size()>0)
     {
         if(debugmode==1 && !is_quiet)
@@ -3278,6 +3289,18 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         if(debugmode==1 && !is_quiet)
         {
             printf("\nBanned a total of %zu individual tokens.\n",banned_token_ids.size());
+        }
+    }
+    if(inputs.tool_call_fix)
+    {
+        for(int v=0;v<n_vocab;++v)
+        {
+            std::string word = FileFormatTokenizeID(v,file_format, true);
+            word = toLowerCase(word);
+            if (word.find(']') != std::string::npos)
+            {
+                toolcall_prevented_ids.push_back(v);
+            }
         }
     }
 
@@ -4068,6 +4091,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
             float * logitsPtr;
             float lowestLogit = 0;
             int btsize = banned_token_ids.size();
+            int tcpreventsize = toolcall_prevented_ids.size();
 
             //sample pending logits. usually only 1, unless speculative decoding
             int logits_to_sample = 1;
@@ -4132,6 +4156,14 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
                     for(int t=0;t<btsize;++t)
                     {
                         logitsPtr[banned_token_ids[t]]=lowestLogit;
+                    }
+                }
+                bool tcpreventtoks = ((kcpp_data->n_predict - remaining_tokens)<3);
+                if(tcpreventsize>0 && tcpreventtoks && std::count(concat_output.begin(), concat_output.end(), '[')<=1)
+                {
+                    for(int t=0;t<tcpreventsize;++t)
+                    {
+                        logitsPtr[toolcall_prevented_ids[t]]=lowestLogit;
                     }
                 }
 
