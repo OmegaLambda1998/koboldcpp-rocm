@@ -2003,6 +2003,12 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     kcpp_data->use_smartcontext = inputs.use_smartcontext;
     kcpp_data->use_contextshift = inputs.use_contextshift;
     kcpp_data->use_fastforward = inputs.use_fastforward;
+    kcpp_data->smartcache = inputs.smartcache;
+    if(!kcpp_data->use_fastforward && kcpp_data->smartcache)
+    {
+        kcpp_data->smartcache = false;
+        printf("\nSmartCache IS DISABLED!\nSmartCache requires Fast Forwarding!\n");
+    }
     kcpp_data->swa_full = !inputs.swa_support;
     if (!kcpp_data->swa_full) {
         if (inputs.use_contextshift) {
@@ -3802,6 +3808,10 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     bool blank_prompt = (addedmemory=="" && kcpp_data->prompt=="");
 
     //smart cache logic
+    if(kcpp_data->smartcache)
+    {
+
+    }
 
     if (file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2 || is_recurrent)
     {
