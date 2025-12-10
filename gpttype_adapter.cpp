@@ -1826,9 +1826,35 @@ static bool kcpp_eval_image(llama_context * ctx_llama, float * img_embd, int num
     return true;
 }
 
+//returns true if context shifting is possible. does not execute the shift
+bool CanContextShift(std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens, const int genamt, const int nctx)
+{
+    return DoContextShifting(nullptr,nullptr,current_context_tokens,new_context_tokens,genamt,nctx,true);
+}
+
+//counts the number of matching prefix tokens between two sequences, returns percentage matched 0.0 to 1.0
+float ComputePrefixMatchPercent(std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens)
+{
+    int match_count = 0;
+    size_t min_length = std::min(current_context_tokens.size(), new_context_tokens.size());
+    for (size_t i = 0; i < min_length; ++i) {
+        if (current_context_tokens[i] == new_context_tokens[i]) {
+            match_count++;
+        } else {
+            break;
+        }
+    }
+    // Handle case where both sequences are empty to avoid division by zero
+    if (min_length == 0) {
+        return 1.0f; // Both empty sequences are considered 100% matched
+    }
+    return static_cast<float>(match_count) / static_cast<float>(min_length);
+}
+
 //given an old GGUF context and a new context that has some middle portion removed,
 //find and remove the middle portion from the old context from the KV. Does not fast forward after this destructive action
-void PurgeMissingTokens(llama_context * ctx, llama_context * draft_ctx, std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens, const int genamt, const int nctx)
+//returns true if contextshift is doable, executes it if dryrun is false
+bool DoContextShifting(llama_context * ctx, llama_context * draft_ctx, std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens, const int genamt, const int nctx, bool dryrun)
 {
     //scan from start old and new ctx, until first mismatch found, save as p0
     //check remaining old and new ctx for longest common subseq, which needs to be at 256 tokens
@@ -1860,11 +1886,9 @@ void PurgeMissingTokens(llama_context * ctx, llama_context * draft_ctx, std::vec
         }
     }
 
-    //printf("\nPN: %d, NTL: %d, CCT: %d,TS:%d, diff:%d, sft:%d\n",purgeneeded,new_tokens_len,current_context_tokens.size(),trimstart,(new_tokens_len - trimstart),ShortfallThreshold);
-
     if(!purgeneeded || new_tokens_len < 6 || current_context_tokens.size() < 6 || new_tokens_len - trimstart < ShortfallThreshold)
     {
-        return; //no purge is needed
+        return false; //no purge is needed
     }
 
     //at least this many tokens need to match, otherwise don't bother trimming
@@ -1881,27 +1905,28 @@ void PurgeMissingTokens(llama_context * ctx, llama_context * draft_ctx, std::vec
         int found = ArrFindIndexOf(current_context_tokens,shared);
         if(found>=0 && found > trimstart)
         {
-
-            //extract the unwanted tokens out from context and KV
-            int diff = found - trimstart;
-            llama_memory_seq_rm(llama_get_memory(ctx), 0, trimstart, trimstart + diff);
-            llama_memory_seq_add(llama_get_memory(ctx), 0, trimstart + diff, -1, -diff);
-            if(draft_ctx)
+            if(!dryrun)
             {
-                llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, trimstart, trimstart + diff);
-                llama_memory_seq_add(llama_get_memory(draft_ctx), 0, trimstart + diff, -1, -diff);
+                //extract the unwanted tokens out from context and KV
+                int diff = found - trimstart;
+                llama_memory_seq_rm(llama_get_memory(ctx), 0, trimstart, trimstart + diff);
+                llama_memory_seq_add(llama_get_memory(ctx), 0, trimstart + diff, -1, -diff);
+                if(draft_ctx)
+                {
+                    llama_memory_seq_rm(llama_get_memory(draft_ctx), 0, trimstart, trimstart + diff);
+                    llama_memory_seq_add(llama_get_memory(draft_ctx), 0, trimstart + diff, -1, -diff);
+                }
+                for (size_t i = trimstart + diff; i < current_context_tokens.size() - 1; i++)
+                {
+                    current_context_tokens[i - diff] = current_context_tokens[i];
+                }
+                printf("\n[Context Shifting: Erased %d tokens at position %d]", diff, trimstart + 1);
+                current_context_tokens.resize(current_context_tokens.size() - diff);
             }
-
-            for (size_t i = trimstart + diff; i < current_context_tokens.size() - 1; i++)
-            {
-                current_context_tokens[i - diff] = current_context_tokens[i];
-            }
-
-            printf("\n[Context Shifting: Erased %d tokens at position %d]", diff, trimstart + 1);
-
-            current_context_tokens.resize(current_context_tokens.size() - diff);
+            return true;
         }
     }
+    return false;
 
 }
 
@@ -1978,6 +2003,12 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     kcpp_data->use_smartcontext = inputs.use_smartcontext;
     kcpp_data->use_contextshift = inputs.use_contextshift;
     kcpp_data->use_fastforward = inputs.use_fastforward;
+    kcpp_data->smartcache = inputs.smartcache;
+    if(!kcpp_data->use_fastforward && kcpp_data->smartcache)
+    {
+        kcpp_data->smartcache = false;
+        printf("\nSmartCache IS DISABLED!\nSmartCache requires Fast Forwarding!\n");
+    }
     kcpp_data->swa_full = !inputs.swa_support;
     if (!kcpp_data->swa_full) {
         if (inputs.use_contextshift) {
@@ -3776,6 +3807,12 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     }
     bool blank_prompt = (addedmemory=="" && kcpp_data->prompt=="");
 
+    //smart cache logic
+    if(kcpp_data->smartcache)
+    {
+
+    }
+
     if (file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2 || is_recurrent)
     {
         if(!blank_prompt)
@@ -3825,7 +3862,7 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
         {
             if(kcpp_data->use_fastforward && kcpp_data->use_contextshift && (file_format == FileFormat::GGUF_GENERIC))
             {
-                PurgeMissingTokens(llama_ctx_v4, draft_ctx, current_context_tokens, embd_inp, inputs.max_length, nctx);
+                DoContextShifting(llama_ctx_v4, draft_ctx, current_context_tokens, embd_inp, inputs.max_length, nctx, false);
                 triggersc = false;
             }
             if(kcpp_data->use_fastforward)
