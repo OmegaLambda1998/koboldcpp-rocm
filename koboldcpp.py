@@ -53,7 +53,7 @@ default_draft_amount = 8
 default_ttsmaxlen = 4096
 default_visionmaxres = 1024
 net_save_slots = 12
-savestate_limit = 3 #3 savestate slots
+savestate_limit = 4 #savestate slots
 default_vae_tile_threshold = 768
 default_native_ctx = 16384
 overridekv_max = 4
@@ -66,7 +66,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.103"
+KcppVersion = "1.104"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -218,6 +218,7 @@ class load_model_inputs(ctypes.Structure):
                 ("highpriority", ctypes.c_bool),
                 ("swa_support", ctypes.c_bool),
                 ("smartcache", ctypes.c_bool),
+                ("pipelineparallel", ctypes.c_bool),
                 ("lora_multiplier", ctypes.c_float),
                 ("quiet", ctypes.c_bool),
                 ("debugmode", ctypes.c_int)]
@@ -331,7 +332,8 @@ class sd_generation_inputs(ctypes.Structure):
                 ("scheduler", ctypes.c_char_p),
                 ("clip_skip", ctypes.c_int),
                 ("vid_req_frames", ctypes.c_int),
-                ("vid_req_avi", ctypes.c_int)]
+                ("vid_req_avi", ctypes.c_int),
+                ("remove_limits", ctypes.c_bool)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -706,6 +708,12 @@ def end_trim_to_sentence(input_text):
 def tryparseint(value,fallback):
     if value is None:
         return fallback
+    if isinstance(value, str):
+        lower_value = value.lower()
+        if lower_value == "true":
+            return 1
+        if lower_value == "false":
+            return 0
     try:
         return int(value)
     except ValueError:
@@ -1521,6 +1529,7 @@ def load_model(model_filename):
     inputs.highpriority = args.highpriority
     inputs.swa_support = args.useswa
     inputs.smartcache = args.smartcache
+    inputs.pipelineparallel = args.pipelineparallel
     inputs = set_backend_props(inputs)
     ret = handle.load_model(inputs)
     return ret
@@ -1865,7 +1874,7 @@ def sd_comfyui_tranform_params(genparams):
         print("Warning: ComfyUI Payload Missing!")
     return genparams
 
-def sd_process_meta_fields(fields, config):
+def sd_process_meta_fields(fields):
     # aliases to match sd.cpp command-line options
     aliases = {
         'cfg-scale': 'cfg_scale',
@@ -1876,15 +1885,12 @@ def sd_process_meta_fields(fields, config):
     }
     fields_dict = {aliases.get(k, k): v for k, v in fields}
     # whitelist accepted parameters
-    whitelist = ['scheduler', 'shifted_timestep', 'distilled_guidance']
-    if config:
-        # note the current UI always set these
-        whitelist += ['sampler_name', 'cfg_scale']
+    whitelist = ['scheduler', 'shifted_timestep', 'distilled_guidance', 'sampler_name', 'cfg_scale', 'add_sd_step_limit', 'add_sd_cfg_limit', 'remove_limits']
     fields_dict = {k: v for k, v in fields_dict.items() if k in whitelist}
     return fields_dict
 
 # json with top-level dict
-def sd_parse_meta_field(prompt, config=False):
+def sd_parse_meta_field(prompt):
     jfields = {}
     kv_dict = {}
     try:
@@ -1898,7 +1904,7 @@ def sd_parse_meta_field(prompt, config=False):
                 print("Warning: couldn't parse meta prompt; it should be valid JSON.")
         if not isinstance(jfields, dict):
             jfields = {}
-        kv_dict = sd_process_meta_fields(jfields.items(), config)
+        kv_dict = sd_process_meta_fields(jfields.items())
     except Exception:
         pass
     return kv_dict
@@ -1907,7 +1913,7 @@ def sd_parse_meta_field(prompt, config=False):
 def sd_generate(genparams):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey, chatcompl_adapter
 
-    sdgendefaults = sd_parse_meta_field(args.sdgendefaults or '', config=True)
+    sdgendefaults = sd_parse_meta_field(args.sdgendefaults or '')
     params = dict()
     defparams = dict()
     for k, v in sdgendefaults.items():
@@ -1925,7 +1931,9 @@ def sd_generate(genparams):
     adapter_obj = genparams.get('adapter', default_adapter)
     forced_negprompt = adapter_obj.get("add_sd_negative_prompt", "")
     forced_posprompt = adapter_obj.get("add_sd_prompt", "")
-    forced_steplimit = adapter_obj.get("add_sd_step_limit", 80)
+    forced_steplimit = tryparseint(adapter_obj.get("add_sd_step_limit", genparams.get("add_sd_step_limit",80)),80)
+    forced_maxcfg = tryparsefloat(adapter_obj.get("add_sd_cfg_limit", genparams.get("add_sd_cfg_limit",25)),25)
+    allow_remove_limits = tryparseint(adapter_obj.get("remove_limits", genparams.get("remove_limits",0)),0)
 
     prompt = genparams.get("prompt", "high quality")
     negative_prompt = genparams.get("negative_prompt", "")
@@ -1970,7 +1978,7 @@ def sd_generate(genparams):
     extra_images_arr = extra_images_arr[:extra_images_max]
 
     #clean vars
-    cfg_scale = (1 if cfg_scale < 1 else (25 if cfg_scale > 25 else cfg_scale))
+    cfg_scale = (1 if cfg_scale < 1 else (forced_maxcfg if cfg_scale > forced_maxcfg else cfg_scale))
     if distilled_guidance is not None and (distilled_guidance < 0 or distilled_guidance > 100):
         distilled_guidance = None # fall back to the default
     if shifted_timestep is not None and (shifted_timestep < 0 or shifted_timestep > 1000):
@@ -2007,6 +2015,7 @@ def sd_generate(genparams):
     inputs.clip_skip = clip_skip
     inputs.vid_req_frames = vid_req_frames
     inputs.vid_req_avi = vid_req_avi
+    inputs.remove_limits = allow_remove_limits
     ret = handle.sd_generate(inputs)
     outstr = ""
     animated = False
@@ -3802,6 +3811,8 @@ Change Mode<br>
                 response_body = (json.dumps([]).encode())
             else:
                 response_body = (json.dumps([friendlysdmodelname]).encode())
+        elif clean_path=='/api/models/loras' or clean_path=='/models/loras':
+            response_body = (json.dumps([]).encode())
         elif clean_path=='/view' or clean_path=='/view.png' or clean_path=='/api/view' or clean_path.startswith('/view_image'): #emulate comfyui
             content_type = 'image/png'
             response_body = lastgeneratedcomfyimg
@@ -4346,7 +4357,7 @@ Change Mode<br>
             if self.path.endswith('/api/admin/check_state'):
                 if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     cur_states = []
-                    for sl in range(savestate_limit): #0,1,2
+                    for sl in range(savestate_limit): #0,1,2,3
                         oldstate = handle.calc_old_state_kv(sl)
                         oldtokencnt = handle.calc_old_state_tokencount(sl)
                         cur_states.append({"tokens":oldtokencnt,"size":oldstate})
@@ -5146,6 +5157,7 @@ def show_gui():
     debugmode = ctk.IntVar()
     keepforeground = ctk.IntVar()
     terminalonly = ctk.IntVar()
+    pipelineparallel = ctk.IntVar()
     quietmode = ctk.IntVar(value=0)
     nocertifymode = ctk.IntVar(value=0)
 
@@ -5177,7 +5189,7 @@ def show_gui():
     jinja_tools_var = ctk.IntVar(value=0)
     moeexperts_var = ctk.StringVar(value=str(-1))
     moecpu_var = ctk.StringVar(value=str(0))
-    defaultgenamt_var = ctk.StringVar(value=str(768))
+    defaultgenamt_var = ctk.StringVar(value=str(896))
     genlimit_var = ctk.StringVar(value=str(0))
     nobostoken_var = ctk.IntVar(value=0)
     override_kv_var = ctk.StringVar(value="")
@@ -5828,7 +5840,8 @@ def show_gui():
         "Use mlock": [usemlock, "Enables mlock, preventing the RAM used to load the model from being paged out."],
         "Debug Mode": [debugmode, "Enables debug mode, with extra info printed to the terminal."],
         "Keep Foreground": [keepforeground, "Bring KoboldCpp to the foreground every time there is a new generation."],
-        "CLI Terminal Only": [terminalonly, "Does not launch KoboldCpp HTTP server. Instead, enables KoboldCpp from the command line, accepting interactive console input and displaying responses to the terminal."]
+        "CLI Terminal Only": [terminalonly, "Does not launch KoboldCpp HTTP server. Instead, enables KoboldCpp from the command line, accepting interactive console input and displaying responses to the terminal."],
+        "Pipeline Parallel": [pipelineparallel, "Enable Pipeline Parallelism for faster multigpu speeds but using more memory, only active for multigpu."],
     }
 
     for idx, (name, properties) in enumerate(hardware_boxes.items()):
@@ -6155,6 +6168,7 @@ def show_gui():
         args.remotetunnel = remotetunnel_var.get()==1
         args.foreground = keepforeground.get()==1
         args.cli = terminalonly.get()==1
+        args.pipelineparallel = pipelineparallel.get()==1
         args.quiet = quietmode.get()==1
         args.nocertify = nocertifymode.get()==1
         args.nomodel = nomodel.get()==1
@@ -6235,7 +6249,7 @@ def show_gui():
             args.overridenativecontext = 0
         args.moeexperts = int(moeexperts_var.get()) if moeexperts_var.get()!="" else -1
         args.moecpu = int(moecpu_var.get()) if moecpu_var.get()!="" else 0
-        args.defaultgenamt = int(defaultgenamt_var.get()) if defaultgenamt_var.get()!="" else 768
+        args.defaultgenamt = int(defaultgenamt_var.get()) if defaultgenamt_var.get()!="" else 896
         args.genlimit = int(genlimit_var.get()) if genlimit_var.get()!="" else 0
         args.nobostoken = (nobostoken_var.get()==1)
         args.jinja = (jinja_var.get()==1)
@@ -6377,6 +6391,7 @@ def show_gui():
         remotetunnel_var.set(1 if "remotetunnel" in dict and dict["remotetunnel"] else 0)
         keepforeground.set(1 if "foreground" in dict and dict["foreground"] else 0)
         terminalonly.set(1 if "cli" in dict and dict["cli"] else 0)
+        pipelineparallel.set(1 if "pipelineparallel" in dict and dict["pipelineparallel"] else 0)
         quietmode.set(1 if "quiet" in dict and dict["quiet"] else 0)
         nocertifymode.set(1 if "nocertify" in dict and dict["nocertify"] else 0)
         nomodel.set(1 if "nomodel" in dict and dict["nomodel"] else 0)
@@ -8394,7 +8409,7 @@ if __name__ == '__main__':
     advparser.add_argument("--nomodel", help="Allows you to launch the GUI alone, without selecting any model.", action='store_true')
     advparser.add_argument("--moeexperts", metavar=('[num of experts]'), help="How many experts to use for MoE models (default=follow gguf)", type=int, default=-1)
     advparser.add_argument("--moecpu","--n-cpu-moe", "-ncmoe", metavar=('[layers affected]'), help="Keep the Mixture of Experts (MoE) weights of the first N layers in the CPU. If no value is provided, applies to all layers.", nargs='?', const=999, type=int, default=0)
-    advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,64,8192), default=768)
+    advparser.add_argument("--defaultgenamt", help="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.", type=check_range(int,64,8192), default=896)
     advparser.add_argument("--nobostoken", help="Prevents BOS token from being added at the start of any prompt. Usually NOT recommended for most models.", action='store_true')
     advparser.add_argument("--enableguidance", help="Enables the use of Classifier-Free-Guidance, which allows the use of negative prompts. Has performance and memory impact.", action='store_true')
     advparser.add_argument("--maxrequestsize", metavar=('[size in MB]'), help="Specify a max request payload size. Any requests to the server larger than this size will be dropped. Do not change if unsure.", type=int, default=32)
@@ -8404,6 +8419,7 @@ if __name__ == '__main__':
     compatgroup2.add_argument("--showgui", help="Always show the GUI instead of launching the model right away when loading settings from a .kcpps file.", action='store_true')
     compatgroup2.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher. Overrides showgui.", action='store_true')
     advparser.add_argument("--singleinstance", help="Allows this KoboldCpp instance to be shut down by any new instance requesting the same port, preventing duplicate servers from clashing on a port.", action='store_true')
+    advparser.add_argument("--pipelineparallel", help="Enable Pipeline Parallelism for faster multigpu speeds but using more memory, only active for multigpu.", action='store_true')
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")

@@ -21,6 +21,7 @@
 #include <string>
 #include <cctype>
 #include <locale>
+#include <chrono>
 
 #include "utils.h"
 
@@ -151,7 +152,7 @@ static int delayed_generated_tokens_limit = 0;
 std::deque<std::string> delayed_generated_tokens; //for use with antislop sampling
 static std::map<int,std::vector<int>> antislop_banned_token_ids; //first is the npast position, second is the array of banned ids at that index
 
-const int savestate_limit = 3;
+const int savestate_limit = 4;
 static savestate_data savestates[savestate_limit];
 
 inline int kcpp_cpu_has_blas(void) {
@@ -1826,12 +1827,6 @@ static bool kcpp_eval_image(llama_context * ctx_llama, float * img_embd, int num
     return true;
 }
 
-//returns true if context shifting is possible. does not execute the shift
-bool CanContextShift(std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens, const int genamt, const int nctx)
-{
-    return DoContextShifting(nullptr,nullptr,current_context_tokens,new_context_tokens,genamt,nctx,true);
-}
-
 //counts the number of matching prefix tokens between two sequences, returns percentage matched 0.0 to 1.0
 float ComputePrefixMatchPercent(std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens)
 {
@@ -1846,7 +1841,7 @@ float ComputePrefixMatchPercent(std::vector<int> &current_context_tokens, std::v
     }
     // Handle case where both sequences are empty to avoid division by zero
     if (min_length == 0) {
-        return 1.0f; // Both empty sequences are considered 100% matched
+        return 0.0f; // Both empty sequences are considered 100% matched
     }
     return static_cast<float>(match_count) / static_cast<float>(min_length);
 }
@@ -1930,6 +1925,13 @@ bool DoContextShifting(llama_context * ctx, llama_context * draft_ctx, std::vect
 
 }
 
+//returns true if context shifting is possible. does not execute the shift
+bool CanContextShift(std::vector<int> &current_context_tokens, std::vector<int> &new_context_tokens, const int genamt, const int nctx)
+{
+    return DoContextShifting(nullptr,nullptr,current_context_tokens,new_context_tokens,genamt,nctx,true);
+}
+
+
 static int GetBatchSize(int desiredBlasBatchSize,FileFormat in_file_format)
 {
     //check if approved to use BLAS
@@ -2004,6 +2006,7 @@ ModelLoadResult gpttype_load_model(const load_model_inputs inputs, FileFormat in
     kcpp_data->use_contextshift = inputs.use_contextshift;
     kcpp_data->use_fastforward = inputs.use_fastforward;
     kcpp_data->smartcache = inputs.smartcache;
+    kcpp_pipeline_parallelism = inputs.pipelineparallel;
     if(!kcpp_data->use_fastforward && kcpp_data->smartcache)
     {
         kcpp_data->smartcache = false;
@@ -3808,9 +3811,63 @@ generation_outputs gpttype_generate(const generation_inputs inputs)
     bool blank_prompt = (addedmemory=="" && kcpp_data->prompt=="");
 
     //smart cache logic
-    if(kcpp_data->smartcache)
+    if(kcpp_data->smartcache && file_format==FileFormat::GGUF_GENERIC)
     {
+        bool shiftable = true;
+        if(!kcpp_data->use_contextshift || is_recurrent)
+        {
+            shiftable = false;
+        }
+        const float similarity_threshold = 0.7f;
+        //If CanBeShifted is true, do nothing. Allow shift as normal.
+        if(!(shiftable && CanContextShift(current_context_tokens, embd_inp, inputs.max_length, nctx)))
+        {
+            // If CanBeShifted is false, calculate prefix similarity with current_context_tokens of current context
+            // If similarity > similarity_threshold, do nothing. Allow fast forward as normal.
+            float similarity = ComputePrefixMatchPercent(current_context_tokens,embd_inp);
+            if(similarity < similarity_threshold)
+            {
+                // Otherwise, for each of the currently used kv state slots, calculate ComputePrefixMatch and CanBeShifted
+                // If similarity to any of them > similarity_threshold or CanBeShifted, save current slot and switch to that slot.
+                // Whenever loading or saving current slot, simply tag the slot with a timestamp. When running out of slots after all 3 are used, delete the oldest timestamped slot.
+                // Slot loading and saving completely reuses gpttype_load_state_kv and gpttype_save_state_kv, nothing else is needed.
+                bool foundswap = false;
+                for(int i=0;i<savestate_limit;++i)
+                {
+                    float similaritybeat = ComputePrefixMatchPercent(savestates[i].savestate_context_tokens,embd_inp);
+                    if(similaritybeat > similarity_threshold || (shiftable && CanContextShift(savestates[i].savestate_context_tokens, embd_inp, inputs.max_length, nctx)))
+                    {
+                        //found a match. save to the oldest slot thats not the one we are loading
+                        int oldest_slot = get_oldest_slot(i);
+                        if(oldest_slot!=i)
+                        {
+                            if(current_context_tokens.size()>32) //do not save tiny contexts
+                            {
+                                printf("\n[SmartCache Match of %.2f in slot %d. Saving into slot %d and switching...]",similaritybeat,i,oldest_slot);
+                                gpttype_save_state_kv(oldest_slot);
+                            }
+                            else
+                            {
+                                printf("\n[SmartCache Match of %.2f in slot %d. Switching...]",similaritybeat,i);
 
+                            }
+                            gpttype_load_state_kv(i);
+                            foundswap = true;
+                            break;
+                        }
+                    }
+                }
+                if(!foundswap) //could not match anything, just save kv and continue
+                {
+                    if(current_context_tokens.size()>32) //do not save tiny contexts
+                    {
+                        int oldest_slot = get_oldest_slot(-1);
+                        printf("\n[SmartCache No Match, Saving into slot %d...]",oldest_slot);
+                        gpttype_save_state_kv(oldest_slot);
+                    }
+                }
+            }
+        }
     }
 
     if (file_format == FileFormat::RWKV_1 || file_format==FileFormat::RWKV_2 || is_recurrent)
@@ -4746,6 +4803,9 @@ size_t gpttype_save_state_kv(int slot)
             totalbytes += res;
             savestates[slot].current_savestate_size   = newsize;
             savestates[slot].savestate_context_tokens = current_context_tokens;
+            auto timenow = std::chrono::system_clock::now();
+            auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(timenow.time_since_epoch()).count();
+            savestates[slot].last_used = timestamp;
             printf("\nKV Save State %d: Created SaveState of %zu tokens, costing %zu MB.\n",slot,current_context_tokens.size(),savestates[slot].current_savestate_size/(1024*1024));
         }
 
@@ -4795,6 +4855,9 @@ bool gpttype_load_state_kv(int slot)
                 auto res2 = llama_state_set_data(draft_ctx, savestates[slot].current_draft_savestate_buffer.data(), savestates[slot].current_draft_savestate_size);
                 printf("\nKV Load DraftSaveState %d: Restored KV with %zu tokens.\n", slot,current_context_tokens.size());
             }
+            auto timenow = std::chrono::system_clock::now();
+            auto timestamp = std::chrono::duration_cast<std::chrono::seconds>(timenow.time_since_epoch()).count();
+            savestates[slot].last_used = timestamp;
         }
         return (res > 0);
     }
@@ -4828,9 +4891,25 @@ bool gpttype_clear_state_kv(bool shrink)
                     }
                     savestates[slot].current_draft_savestate_size = 0;
                 }
+                savestates[slot].last_used = 0;
             }
         }
         return true;
     }
     return false;
+}
+
+int get_oldest_slot(int excludeSlotId)
+{
+    int64_t slotage = INT64_MAX; // Initialize with maximum possible value
+    int slotid = 0;
+    for(int i=0;i<savestate_limit;++i)
+    {
+        if(savestates[i].last_used <= slotage && i!=excludeSlotId)
+        {
+            slotage = savestates[i].last_used;
+            slotid = i;
+        }
+    }
+    return slotid;
 }
