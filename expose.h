@@ -213,13 +213,19 @@ struct sd_generation_inputs
     const char * scheduler = nullptr;
     const int clip_skip = -1;
     const int vid_req_frames = 1;
-    const int vid_req_avi = 0;
+    const int video_output_type = 0; //0=gif, 1=avi, 2=both
     const bool remove_limits = false;
 };
 struct sd_generation_outputs
 {
     int status = -1;
     int animated = 0;
+    const char * data = "";
+    const char * data_extra = "";
+};
+struct sd_info_outputs
+{
+    int status = -1;
     const char * data = "";
 };
 
