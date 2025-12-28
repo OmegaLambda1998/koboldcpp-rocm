@@ -265,6 +265,7 @@ class generation_inputs(ctypes.Structure):
                 ("dynatemp_exponent", ctypes.c_float),
                 ("smoothing_factor", ctypes.c_float),
                 ("smoothing_curve", ctypes.c_float),
+                ("adaptive_target", ctypes.c_float),
                 ("dry_multiplier", ctypes.c_float),
                 ("dry_base", ctypes.c_float),
                 ("dry_allowed_length", ctypes.c_int),
@@ -1603,6 +1604,9 @@ def generate(genparams, stream_flag=False):
     dynatemp_exponent = tryparsefloat(genparams.get('dynatemp_exponent', 1.0),1.0)
     smoothing_factor = tryparsefloat(genparams.get('smoothing_factor', 0.0),0.0)
     smoothing_curve = tryparsefloat(genparams.get('smoothing_curve', 1.0),1.0)
+    adaptive_target = tryparsefloat(genparams.get('adaptive_target', -1.0),-1.0)
+    if adaptive_target>0 and min_p<=0 and top_p>=1.0: #adaptive p sampler requires a truncation sampler first, force a tiny min-p
+        min_p = 0.01
     logit_biases = genparams.get('logit_bias', {})
     render_special = genparams.get('render_special', False)
     banned_strings = genparams.get('banned_strings', []) # SillyTavern uses that name
@@ -1666,6 +1670,7 @@ def generate(genparams, stream_flag=False):
     inputs.dynatemp_exponent = dynatemp_exponent
     inputs.smoothing_factor = smoothing_factor
     inputs.smoothing_curve = smoothing_curve
+    inputs.adaptive_target = adaptive_target
     inputs.grammar = grammar.encode("UTF-8")
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not ban_eos_token
@@ -1902,58 +1907,41 @@ def sd_comfyui_tranform_params(genparams):
         print("Warning: ComfyUI Payload Missing!")
     return genparams
 
-def sd_process_meta_fields(fields):
-    # aliases to match sd.cpp command-line options
-    aliases = {
+# json with top-level dict
+def gendefaults_parse_meta_field(input_str):
+    alias_map = {
         'cfg-scale': 'cfg_scale',
         'guidance': 'distilled_guidance',
         'sampler': 'sampler_name',
         'sampling-method': 'sampler_name',
         'timestep-shift': 'shifted_timestep',
     }
-    fields_dict = {aliases.get(k, k): v for k, v in fields}
-    # whitelist accepted parameters
-    whitelist = ['scheduler', 'shifted_timestep', 'distilled_guidance', 'sampler_name', 'cfg_scale', 'add_sd_step_limit', 'add_sd_cfg_limit', 'remove_limits']
-    fields_dict = {k: v for k, v in fields_dict.items() if k in whitelist}
-    return fields_dict
-
-# json with top-level dict
-def sd_parse_meta_field(prompt):
-    jfields = {}
-    kv_dict = {}
-    try:
+    if not isinstance(input_str, str) or not input_str.strip():
+        return {}
+    parsed = None
+    try: # Try parsing as-is
+        parsed = json.loads(input_str)
+    except json.JSONDecodeError:
+        # Try wrapping in braces for loose key/value strings
         try:
-            jfields = json.loads(prompt)
+            parsed = json.loads(f"{{{input_str}}}")
         except json.JSONDecodeError:
-            # accept "field":"value",... without {} (also empty strings)
-            try:
-                jfields = json.loads('{ ' + prompt + ' }')
-            except json.JSONDecodeError:
-                print("Warning: couldn't parse meta prompt; it should be valid JSON.")
-        if not isinstance(jfields, dict):
-            jfields = {}
-        kv_dict = sd_process_meta_fields(jfields.items())
-    except Exception:
-        pass
-    return kv_dict
-
+            print("Warning: couldn't parse gendefaults_parse_meta_field.")
+            return {}
+    if not isinstance(parsed, dict):
+        print("Warning: gendefaults_parse_meta_field - not a JSON object.")
+        return {}
+    result = {}
+    # First pass: apply aliases only if canonical key is not explicitly present
+    for key, value in parsed.items():
+        canonical = alias_map.get(key, key)
+        if canonical not in parsed:
+            result[canonical] = value
+    result.update(parsed)  # Second pass: explicit keys override aliases
+    return result
 
 def sd_generate(genparams):
     global maxctx, args, currentusergenkey, totalgens, pendingabortkey, chatcompl_adapter
-
-    sdgendefaults = sd_parse_meta_field(args.sdgendefaults or '')
-    params = dict()
-    defparams = dict()
-    for k, v in sdgendefaults.items():
-        if k in ['sampler_name', 'scheduler']:
-            # these can be explicitely set to 'default'; process later
-            # TODO should we consider values like 'clip_skip=-1' as 'default' too?
-            defparams[k] = v
-        else:
-            params[k] = v
-    # apply most of the defaults
-    params.update(genparams)
-    genparams = params
 
     default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
     adapter_obj = genparams.get('adapter', default_adapter)
@@ -1991,11 +1979,7 @@ def sd_generate(genparams):
     if seed < 0:
         seed = random.randint(100000, 999999)
     sample_method = (genparams.get("sampler_name") or "default").lower()
-    if sample_method == 'default' and 'sampler_name' in defparams:
-        sample_method = (defparams.get("sampler_name") or "default").lower()
     scheduler = (genparams.get("scheduler") or "default").lower()
-    if scheduler == 'default' and 'scheduler' in defparams:
-        scheduler = (defparams.get("scheduler") or "default").lower()
     clip_skip = tryparseint(genparams.get("clip_skip", -1),-1)
     vid_req_frames = tryparseint(genparams.get("frames", 1),1)
     vid_req_frames = 1 if (not vid_req_frames or vid_req_frames < 1) else vid_req_frames
@@ -2814,7 +2798,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
         default_adapter = {} if chatcompl_adapter is None else chatcompl_adapter
         adapter_obj = genparams.get('adapter', default_adapter)
         default_max_tok = (adapter_obj.get("max_length", args.defaultgenamt) if (api_format==4 or api_format==7) else args.defaultgenamt)
-        genparams["max_length"] = tryparseint(genparams.get('max_tokens', genparams.get('max_completion_tokens', default_max_tok)),default_max_tok)
+        oaiml = tryparseint(genparams.get('max_tokens', genparams.get('max_completion_tokens', default_max_tok)),default_max_tok)
+        genparams["max_length"] = genparams.get('max_length', oaiml)
         if genparams["max_length"] <= 0:
             genparams["max_length"] = default_max_tok
         presence_penalty = genparams.get('presence_penalty', genparams.get('frequency_penalty', 0.0))
@@ -4514,6 +4499,10 @@ Change Mode<br>
                         }}).encode())
                         return
 
+                gendefaults = gendefaults_parse_meta_field(args.gendefaults or '')
+                gen_new_keys = {k: v for k, v in gendefaults.items() if k not in genparams}
+                genparams.update(gendefaults if args.gendefaultsoverwrite else gen_new_keys)
+
                 trunc_len = 8000
                 if args.debugmode >= 1:
                     trunc_len = 32000
@@ -5279,7 +5268,8 @@ def show_gui():
     sd_clamped_soft_var = ctk.StringVar(value="0")
     sd_threads_var = ctk.StringVar(value=str(default_threads))
     sd_quant_var = ctk.StringVar(value=sd_quant_choices[0])
-    sd_gen_defaults_var = ctk.StringVar()
+    gen_defaults_var = ctk.StringVar()
+    gen_defaults_overwrite_var = ctk.IntVar(value=0)
 
     whisper_model_var = ctk.StringVar()
     tts_model_var = ctk.StringVar()
@@ -5914,6 +5904,8 @@ def show_gui():
     context_var.trace_add("write", changed_gpulayers_estimate)
     makelabelentry(context_tab, "Default Gen Amt:", defaultgenamt_var, row=20, padx=(120), singleline=True, tooltip="How many tokens to generate by default, if not specified. Must be smaller than context size. Usually, your frontend GUI will override this.")
     makelabelentry(context_tab, "Prompt Limit:", genlimit_var, row=20, padx=(300), singleline=True, tooltip="If set, restricts max output tokens to this limit regardless of API request. Set to 0 to disable.",labelpadx=(210))
+    makelabelentry(context_tab, "Default Params:", gen_defaults_var, row=21, width=200, padx=(110), singleline=True, tooltip='Set default generation parameters for incoming API payloads.\nSpecified as JSON fields: {"KEY1":"VALUE1", "KEY2":"VALUE2"...}')
+    makecheckbox(context_tab, "Override", gen_defaults_overwrite_var, row=21,padx=(330), tooltiptxt="Allow the gendefaults parameters to overwrite the original value in API payloads.")
 
     nativectx_entry, nativectx_label = makelabelentry(context_tab, "Override Native Context:", customrope_nativectx, row=23, padx=(146), singleline=True, tooltip="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.")
     customrope_scale_entry, customrope_scale_label = makelabelentry(context_tab, "RoPE Scale:", customrope_scale, row=23, padx=(100), singleline=True, tooltip="For Linear RoPE scaling. RoPE frequency scale.")
@@ -6080,7 +6072,6 @@ def show_gui():
     makecheckbox(images_tab, "Model CPU Offload", sd_offload_cpu_var, 50,padx=8, tooltiptxt="Offload image weights in RAM to save VRAM, swap into VRAM when needed.")
     makecheckbox(images_tab, "VAE on CPU", sd_vae_cpu_var, 50,padx=(160), tooltiptxt="Force VAE to CPU only for image generation.")
     makecheckbox(images_tab, "CLIP on GPU", sd_clip_gpu_var, 50,padx=(280), tooltiptxt="Put CLIP and T5 to GPU for image generation. Otherwise, CLIP will use CPU.")
-    makelabelentry(images_tab, "Default Params:", sd_gen_defaults_var, 52, 280, padx=(110), singleline=True, tooltip='Default image generation parameters when not specified by the UI or API.\nSpecified as JSON fields: {"KEY1":"VALUE1", "KEY2":"VALUE2"...}')
 
     # audio tab
     audio_tab = tabcontent["Audio"]
@@ -6384,8 +6375,9 @@ def show_gui():
         else:
             args.sdlora = ""
 
-        if sd_gen_defaults_var.get() != "":
-            args.sdgendefaults = sd_gen_defaults_var.get()
+        if gen_defaults_var.get() != "":
+            args.gendefaults = gen_defaults_var.get()
+        args.gendefaultsoverwrite = (gen_defaults_overwrite_var.get()==1)
 
         if whisper_model_var.get() != "":
             args.whispermodel = whisper_model_var.get()
@@ -6617,7 +6609,8 @@ def show_gui():
 
         sd_lora_var.set(dict["sdlora"] if ("sdlora" in dict and dict["sdlora"]) else "")
         sd_loramult_var.set(str(dict["sdloramult"]) if ("sdloramult" in dict and dict["sdloramult"]) else "1.0")
-        sd_gen_defaults_var.set(dict["sdgendefaults"] if ("sdgendefaults" in dict and dict["sdgendefaults"]) else "")
+        gen_defaults_var.set(dict["gendefaults"] if ("gendefaults" in dict and dict["gendefaults"]) else "")
+        gen_defaults_overwrite_var.set(1 if "gendefaultsoverwrite" in dict and dict["gendefaultsoverwrite"] else 0)
 
         whisper_model_var.set(dict["whispermodel"] if ("whispermodel" in dict and dict["whispermodel"]) else "")
 
@@ -7002,6 +6995,8 @@ def convert_invalid_args(args):
         dict["sdclip2"] = dict["sdclipg"]
     if "jinja_tools" in dict and dict["jinja_tools"]:
         dict["jinja"] = True
+    if "sdgendefaults" in dict and "gendefaults" not in dict:
+        dict["gendefaults"] = dict["sdgendefaults"]
     return args
 
 def setuptunnel(global_memory, has_sd):
@@ -8467,6 +8462,8 @@ if __name__ == '__main__':
     compatgroup2.add_argument("--skiplauncher", help="Doesn't display or use the GUI launcher. Overrides showgui.", action='store_true')
     advparser.add_argument("--singleinstance", help="Allows this KoboldCpp instance to be shut down by any new instance requesting the same port, preventing duplicate servers from clashing on a port.", action='store_true')
     advparser.add_argument("--pipelineparallel", help="Enable Pipeline Parallelism for faster multigpu speeds but using more memory, only active for multigpu.", action='store_true')
+    advparser.add_argument("--gendefaults", metavar=('{"parameter":"value",...}'), help="Sets extra default parameters for some fields in API requests, as a JSON string.", default="")
+    advparser.add_argument("--gendefaultsoverwrite", help="Allow the gendefaults parameters to overwrite the original value in API payloads.", action='store_true')
 
     hordeparsergroup = parser.add_argument_group('Horde Worker Commands')
     hordeparsergroup.add_argument("--hordemodelname", metavar=('[name]'), help="Sets your AI Horde display model name.", default="")
@@ -8497,7 +8494,6 @@ if __name__ == '__main__':
     sdparsergrouplora.add_argument("--sdlora", metavar=('[filename]'), help="Specify an image generation LORA safetensors model to be applied.", default="")
     sdparsergroup.add_argument("--sdloramult", metavar=('[amount]'), help="Multiplier for the image LORA model to be applied.", type=float, default=1.0)
     sdparsergroup.add_argument("--sdtiledvae", metavar=('[maxres]'), help="Adjust the automatic VAE tiling trigger for images above this size. 0 disables vae tiling.", type=int, default=default_vae_tile_threshold)
-    sdparsergroup.add_argument("--sdgendefaults", metavar=('{"parameter":"value",...}'), help="Sets default parameters for image generation, as a JSON string.", default="")
     whisperparsergroup = parser.add_argument_group('Whisper Transcription Commands')
     whisperparsergroup.add_argument("--whispermodel", metavar=('[filename]'), help="Specify a Whisper .bin model to enable Speech-To-Text transcription.", default="")
 
@@ -8525,6 +8521,7 @@ if __name__ == '__main__':
     compatgroup3.add_argument("--nommap","--no-mmap", help=argparse.SUPPRESS, action='store_true')
     deprecatedgroup.add_argument("--sdnotile", help=argparse.SUPPRESS, action='store_true') # legacy option, see sdtiledvae
     deprecatedgroup.add_argument("--forceversion", help=argparse.SUPPRESS, action='store_true') #no longer used
+    deprecatedgroup.add_argument("--sdgendefaults", help=argparse.SUPPRESS, action='store_true') # legacy option, see gendefaults
 
     debuggroup = parser.add_argument_group('Debug Commands')
     debuggroup.add_argument("--testmemory", help=argparse.SUPPRESS, action='store_true')
