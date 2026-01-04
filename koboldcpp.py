@@ -53,7 +53,8 @@ default_draft_amount = 8
 default_ttsmaxlen = 4096
 default_visionmaxres = 1024
 net_save_slots = 12
-savestate_limit = 5 #savestate slots
+savestate_limit_default = 5
+savestate_limit = 0 #savestate slots start at 0, only set when load model
 default_vae_tile_threshold = 768
 default_native_ctx = 16384
 overridekv_max = 4
@@ -66,7 +67,7 @@ dry_seq_break_max = 128
 extra_images_max = 4 # for kontext/qwen img
 
 # global vars
-KcppVersion = "1.105"
+KcppVersion = "1.105.2"
 showdebug = True
 kcpp_instance = None #global running instance
 global_memory = {"tunnel_url": "", "restart_target":"", "input_to_exit":False, "load_complete":False, "restart_override_config_target":""}
@@ -220,6 +221,7 @@ class load_model_inputs(ctypes.Structure):
                 ("highpriority", ctypes.c_bool),
                 ("swa_support", ctypes.c_bool),
                 ("smartcache", ctypes.c_bool),
+                ("smartcacheslots", ctypes.c_int),
                 ("pipelineparallel", ctypes.c_bool),
                 ("lora_multiplier", ctypes.c_float),
                 ("quiet", ctypes.c_bool),
@@ -266,6 +268,7 @@ class generation_inputs(ctypes.Structure):
                 ("smoothing_factor", ctypes.c_float),
                 ("smoothing_curve", ctypes.c_float),
                 ("adaptive_target", ctypes.c_float),
+                ("adaptive_decay", ctypes.c_float),
                 ("dry_multiplier", ctypes.c_float),
                 ("dry_base", ctypes.c_float),
                 ("dry_allowed_length", ctypes.c_int),
@@ -336,7 +339,9 @@ class sd_generation_inputs(ctypes.Structure):
                 ("clip_skip", ctypes.c_int),
                 ("vid_req_frames", ctypes.c_int),
                 ("video_output_type", ctypes.c_int),
-                ("remove_limits", ctypes.c_bool)]
+                ("remove_limits", ctypes.c_bool),
+                ("circular_x", ctypes.c_bool),
+                ("circular_y", ctypes.c_bool)]
 
 class sd_generation_outputs(ctypes.Structure):
     _fields_ = [("status", ctypes.c_int),
@@ -1460,7 +1465,7 @@ def auto_set_backend_cli():
         print(f"Auto Selected Default Backend (flag={cpusupport})\n")
 
 def load_model(model_filename):
-    global args, calulated_gpu_overhead
+    global args, calulated_gpu_overhead, savestate_limit
     inputs = load_model_inputs()
     inputs.model_filename = model_filename.encode("UTF-8")
     inputs.max_context_length = maxctx #initial value to use for ctx, can be overwritten
@@ -1503,7 +1508,7 @@ def load_model(model_filename):
         inputs.quant_k = inputs.quant_v = 0
     inputs.batchsize = args.batchsize
     inputs.autofit = args.autofit
-    inputs.autofit_tax_mb = int(calulated_gpu_overhead)
+    inputs.autofit_tax_mb = int(calulated_gpu_overhead/(1024*1024))
     inputs.gpulayers = args.gpulayers
     if args.overridenativecontext and args.overridenativecontext>0:
         inputs.overridenativecontext = args.overridenativecontext
@@ -1542,7 +1547,11 @@ def load_model(model_filename):
     inputs.check_slowness = (not args.highpriority and os.name == 'nt' and 'Intel' in platform.processor())
     inputs.highpriority = args.highpriority
     inputs.swa_support = args.useswa
-    inputs.smartcache = args.smartcache
+    scint = int(args.smartcache)
+    inputs.smartcache = False if scint<=0 else True
+    sclimit = (savestate_limit_default if scint<=1 else scint)
+    savestate_limit = sclimit
+    inputs.smartcacheslots = sclimit
     inputs.pipelineparallel = args.pipelineparallel
     inputs = set_backend_props(inputs)
     ret = handle.load_model(inputs)
@@ -1605,8 +1614,10 @@ def generate(genparams, stream_flag=False):
     smoothing_factor = tryparsefloat(genparams.get('smoothing_factor', 0.0),0.0)
     smoothing_curve = tryparsefloat(genparams.get('smoothing_curve', 1.0),1.0)
     adaptive_target = tryparsefloat(genparams.get('adaptive_target', -1.0),-1.0)
+    adaptive_decay = tryparsefloat(genparams.get('adaptive_decay', 0.9),0.9)
+    adaptive_decay = 0.01 if adaptive_decay < 0.01 else (0.99 if adaptive_decay > 0.99 else adaptive_decay)
     if adaptive_target>0 and min_p<=0 and top_p>=1.0: #adaptive p sampler requires a truncation sampler first, force a tiny min-p
-        min_p = 0.01
+        min_p = 0.002
     logit_biases = genparams.get('logit_bias', {})
     render_special = genparams.get('render_special', False)
     banned_strings = genparams.get('banned_strings', []) # SillyTavern uses that name
@@ -1671,6 +1682,7 @@ def generate(genparams, stream_flag=False):
     inputs.smoothing_factor = smoothing_factor
     inputs.smoothing_curve = smoothing_curve
     inputs.adaptive_target = adaptive_target
+    inputs.adaptive_decay = adaptive_decay
     inputs.grammar = grammar.encode("UTF-8")
     inputs.grammar_retain_state = grammar_retain_state
     inputs.allow_eos_token = not ban_eos_token
@@ -2028,6 +2040,8 @@ def sd_generate(genparams):
     inputs.vid_req_frames = vid_req_frames
     inputs.video_output_type = video_output_type
     inputs.remove_limits = allow_remove_limits
+    inputs.circular_x = tryparseint(adapter_obj.get("circular_x", genparams.get("circular_x",0)),0)
+    inputs.circular_y = tryparseint(adapter_obj.get("circular_y", genparams.get("circular_y",0)),0)
     ret = handle.sd_generate(inputs)
     data_main = ""
     data_extra = ""
@@ -2583,6 +2597,24 @@ def strip_oaicontent_of_media(oaicontent):
         return outarr
     return oaicontent
 
+def strip_mcpcontent_of_media(mcpcontentstr):
+    try:
+        if isinstance(mcpcontentstr, str):
+            #we try to strip out the b64 of MCP type tool responses with images for past turns
+            mcp_pl = json.loads(mcpcontentstr)
+            pl_modified = False
+            if isinstance(mcp_pl, dict) and isinstance(mcp_pl.get("content",None),list):
+                pl_arr = mcp_pl.get("content",[])
+                for idx in range(len(pl_arr)):
+                    if pl_arr[idx].get("type","")=="image" and pl_arr[idx].get("data","")!="":
+                        pl_arr[idx]["data"] = "(base64 data attached)"
+                        pl_modified = True
+                if pl_modified:
+                    mcpcontentstr = json.dumps(mcp_pl)
+    except Exception:
+        pass
+    return mcpcontentstr
+
 #returns the found JSON of the correct tool to use, or None if no tool is suitable
 def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_followup_tool):
     # tools handling: Check if user is passing a openai tools array, if so add to end of prompt before assistant prompt unless tool_choice has been set to None
@@ -2600,7 +2632,11 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
     last_user_message = ""
     tool_call_results = ""
 
+    images_added = [] #sometimes images are needed to make a decision too
+    audio_added = []
+
     if messages:
+        images_added, audio_added = sweep_media_from_messages(messages)
         reversed_messages = list(reversed(messages))
         for message in reversed_messages:
             if message["role"] == "user":
@@ -2611,7 +2647,9 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
         tool_call_chunk = []
         for message in reversed_messages:
             if message["role"] == "tool":
-                tool_call_chunk.append(message["content"])
+                toolrespstr = message["content"]
+                # toolrespstr = strip_mcpcontent_of_media(toolrespstr)
+                tool_call_chunk.append(toolrespstr)
             else:
                 break
         tmp_tool_replies = list(reversed(tool_call_chunk))
@@ -2652,6 +2690,10 @@ def determine_tool_json_to_use(genparams, curr_ctx, assistant_message_start, is_
                 "ban_eos_token":False,
                 "grammar":toolquerygrammar
             }
+            if len(images_added)>0:
+                temp_poll["images"] = images_added
+            if len(audio_added)>0:
+                temp_poll["audio"] = audio_added
             temp_poll_result = generate(genparams=temp_poll)
             temp_poll_text = temp_poll_result['text'].strip().rstrip('.')
             temp_poll_data_arr = extract_json_from_string(temp_poll_text)
@@ -2712,6 +2754,15 @@ def sweep_media_from_messages(messages_array):
                     data = item.get("input_audio", {}).get("data")
                     if data:
                         audio.append(data)
+        elif message.get("role", "")=="tool" and isinstance(curr_content, str): #handle mcp returned images
+            try:
+                mcp_pl = json.loads(curr_content)
+                if isinstance(mcp_pl, dict) and isinstance(mcp_pl.get("content",None),list):
+                    pl_arr = mcp_pl.get("content",[])
+                    if len(pl_arr)>0 and pl_arr[0].get("type","")=="image" and pl_arr[0].get("data","")!="":
+                        images.append(pl_arr[0].get("data",""))
+            except Exception:
+                pass
         imgs_ollama = message.get("images", None)
         if imgs_ollama:
             for img in imgs_ollama:
@@ -2752,6 +2803,7 @@ number ::= ("-"? ([0-9] | [1-9] [0-9]{0,15})) ("." [0-9]+)? ([eE] [-+]? [1-9] [0
 ws ::= | " " | "\n" [ \t]{0,20}
 """
 
+    used_tool_json = None
     #api format 1=basic,2=kai,3=oai,4=oai-chat,5=interrogate,6=ollama,7=ollamachat
     #alias all nonstandard alternative names for rep pen.
     rp1 = float(genparams.get('repeat_penalty', 1.0))
@@ -2831,6 +2883,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
             audio_added = []
             continue_assistant_turn = genparams.get('continue_assistant_turn', False)
             latest_turn_was_assistant = False
+            latest_turn_was_tool = False
 
             # handle structured outputs
             respformat = genparams.get('response_format', None)
@@ -2882,6 +2935,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                 for message in messages_array:
                     message_index += 1
                     latest_turn_was_assistant = False
+                    latest_turn_was_tool = False
                     if message['role'] == "system":
                         messages_string += system_message_start
                     elif message['role'] == "user":
@@ -2890,6 +2944,7 @@ ws ::= | " " | "\n" [ \t]{0,20}
                         messages_string += assistant_message_start
                         latest_turn_was_assistant = True
                     elif message['role'] == "tool":
+                        latest_turn_was_tool = True
                         messages_string += tools_message_start
                         tcid = message.get("tool_call_id","")
                         tcid = ("" if not tcid else f" {tcid}")
@@ -2919,6 +2974,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
                                 messages_string += "\n(Made a function call)\n"
                         pass  # do nothing
                     elif isinstance(curr_content, str):
+                        if latest_turn_was_tool and message_index < len(messages_array):
+                            curr_content = strip_mcpcontent_of_media(curr_content)
                         messages_string += curr_content
                     elif isinstance(curr_content, list): #is an array
                         for item in curr_content:
@@ -2980,6 +3037,8 @@ ws ::= | " " | "\n" [ \t]{0,20}
             else:
                 genparams["stop_sequence"].append(user_message_start.strip())
                 genparams["stop_sequence"].append(assistant_message_start.strip())
+            if not used_tool_json and jinjatools and latest_turn_was_tool:
+                genparams["stop_sequence"].append("(Made a function call") # qol prevent fake toolcalls
             genparams["trim_stop"] = True
 
 
@@ -3943,7 +4002,7 @@ Change Mode<br>
         return
 
     def do_POST(self):
-        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, lastuploadedcomfyimg, lastgeneratedcomfyimg, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, net_save_slots, has_vision_support
+        global modelbusy, requestsinqueue, currentusergenkey, totalgens, pendingabortkey, lastuploadedcomfyimg, lastgeneratedcomfyimg, multiplayer_turn_major, multiplayer_turn_minor, multiplayer_story_data_compressed, multiplayer_dataformat, multiplayer_lastactive, net_save_slots, has_vision_support, savestate_limit
         contlenstr = self.headers['content-length']
         content_length = 0
         body = None
@@ -4382,7 +4441,7 @@ Change Mode<br>
                 else:
                     response_body = (json.dumps({"success": False, "old_states":[], "new_state_size":0, "new_tokens":0}).encode())
             elif self.path.endswith('/api/admin/load_state'):
-                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     targetslot = 0
                     try:
                         tempbody = json.loads(body)
@@ -4397,7 +4456,7 @@ Change Mode<br>
                 else:
                     response_body = (json.dumps({"success": False, "new_tokens":0}).encode())
             elif self.path.endswith('/api/admin/save_state'):
-                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     targetslot = 0
                     try:
                         tempbody = json.loads(body)
@@ -4412,7 +4471,7 @@ Change Mode<br>
                 else:
                     response_body = (json.dumps({"success": False, "new_state_size":0, "new_tokens":0}).encode())
             elif self.path.endswith('/api/admin/clear_state'):
-                if global_memory and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
+                if global_memory and savestate_limit>0 and args.admin and args.admindir and os.path.exists(args.admindir) and self.check_header_password(args.adminpassword):
                     result = handle.clear_state_kv()
                     response_body = (json.dumps({"success": result}).encode())
                 else:
@@ -4501,7 +4560,21 @@ Change Mode<br>
 
                 gendefaults = gendefaults_parse_meta_field(args.gendefaults or '')
                 gen_new_keys = {k: v for k, v in gendefaults.items() if k not in genparams}
+                #special handling for some params that should be overwritten if equal to literal string default
+                special_fields = ["sampler_name", "scheduler"]
+                for field in special_fields:
+                    if field in genparams and isinstance(genparams[field], str):
+                        genparams[field] = genparams[field].lower()
+                special_fields_overwrite = {}
+                if not args.gendefaultsoverwrite:
+                    for field in special_fields:
+                        if genparams.get(field, "default") == "default" and field in gendefaults:
+                            value = gendefaults.get(field, "default")
+                            if isinstance(value, str):
+                                value = value.lower()
+                            special_fields_overwrite[field] = value
                 genparams.update(gendefaults if args.gendefaultsoverwrite else gen_new_keys)
+                genparams.update(special_fields_overwrite)
 
                 trunc_len = 8000
                 if args.debugmode >= 1:
@@ -4678,7 +4751,28 @@ Change Mode<br>
                     return
                 elif is_transcribe:
                     try:
-                        gendat = whisper_generate(genparams)
+                        global fullwhispermodelpath, has_audio_support
+                        gendat = None
+                        if genparams.get("audio_data","") and fullwhispermodelpath=="" and has_audio_support: #if we have no whisper model but an audio-capable projector, use that instead
+                            adapter_obj = {} if chatcompl_adapter is None else chatcompl_adapter
+                            user_message_start = adapter_obj.get("user_start", "### Instruction:")
+                            assistant_message_start = adapter_obj.get("assistant_start", "### Response:")
+                            assistant_message_gen = adapter_obj.get("assistant_gen", assistant_message_start)
+                            prompt = f"{user_message_start} Transcribe all speech in the audio.\n{assistant_message_gen}"
+                            rawaudio = genparams.get("audio_data","").replace("data:audio/wav;base64,","")
+                            temp_poll = {
+                                "prompt": prompt,
+                                "max_length":300,
+                                "temperature":0.1,
+                                "top_k":1,
+                                "rep_pen":1,
+                                "ban_eos_token":False,
+                                "audio": [rawaudio]
+                            }
+                            temp_poll_result = generate(genparams=temp_poll)
+                            gendat = temp_poll_result['text']
+                        else:
+                            gendat = whisper_generate(genparams)
                         genresp = (json.dumps({"text":gendat}).encode())
                         self.send_response(200)
                         self.send_header('content-length', str(len(genresp)))
@@ -5197,6 +5291,7 @@ def show_gui():
     fastforward_var = ctk.IntVar(value=1)
     swa_var = ctk.IntVar(value=0)
     smartcache_var = ctk.IntVar(value=0)
+    smartcacheslots_var = ctk.StringVar(value=str(savestate_limit_default))
     remotetunnel_var = ctk.IntVar(value=0)
     smartcontext_var = ctk.IntVar()
     flashattention_var = ctk.IntVar(value=0)
@@ -5898,6 +5993,7 @@ def show_gui():
     makecheckbox(context_tab, "Use FastForwarding", fastforward_var, 3,tooltiptxt="Use fast forwarding to recycle previous context (always reprocess if disabled).\nRecommended.", command=togglefastforward)
     makecheckbox(context_tab, "Use Sliding Window Attention (SWA)", swa_var, 4,tooltiptxt="Allows Sliding Window Attention (SWA) KV Cache, which saves memory but cannot be used with context shifting.", command=toggleswa)
     makecheckbox(context_tab, "Use SmartCache", smartcache_var, 5,tooltiptxt="Enables intelligent context switching by saving KV cache snapshots to RAM. Requires fast forwarding.", command=togglesmartcache)
+    makelabelentry(context_tab, "CacheSlots:", smartcacheslots_var, row=5, padx=(300), singleline=True, tooltip="Number of slots for smartcache",labelpadx=(220))
 
     # context size
     makeslider(context_tab, "Context Size:",contextsize_text, context_var, 0, len(contextsize_text)-1, 18, width=280, set=7,tooltip="What is the maximum context size to support. Model specific. You cannot exceed it.\nLarger contexts require more memory, and not all models support it.")
@@ -6196,7 +6292,7 @@ def show_gui():
         args.noshift = contextshift_var.get()==0
         args.nofastforward = fastforward_var.get()==0
         args.useswa = swa_var.get()==1
-        args.smartcache = smartcache_var.get()==1
+        args.smartcache = (0 if smartcache_var.get()!=1 else int(smartcacheslots_var.get()))
         args.remotetunnel = remotetunnel_var.get()==1
         args.foreground = keepforeground.get()==1
         args.cli = terminalonly.get()==1
@@ -6421,6 +6517,7 @@ def show_gui():
         fastforward_var.set(0 if "nofastforward" in dict and dict["nofastforward"] else 1)
         swa_var.set(1 if "useswa" in dict and dict["useswa"] else 0)
         smartcache_var.set(1 if "smartcache" in dict and dict["smartcache"] else 0)
+        smartcacheslots_var.set(dict["smartcache"] if ("smartcache" in dict and dict["smartcache"] and int(dict["smartcache"])>1) else savestate_limit_default)
         remotetunnel_var.set(1 if "remotetunnel" in dict and dict["remotetunnel"] else 0)
         keepforeground.set(1 if "foreground" in dict and dict["foreground"] else 0)
         terminalonly.set(1 if "cli" in dict and dict["cli"] else 0)
@@ -7762,7 +7859,7 @@ def kcpp_main_process(launch_args, g_memory=None, gui_launcher=False):
     global maxhordelen, maxhordectx, showdebug, has_multiplayer, savedata_obj
     if args.hordemodelname and args.hordemodelname!="":
         friendlymodelname = args.hordemodelname
-        if args.debugmode == 1:
+        if args.debugmode == 1 or args.gendefaults:
             friendlymodelname = "debug-" + friendlymodelname
         if not friendlymodelname.startswith("koboldcpp/"):
             friendlymodelname = "koboldcpp/" + friendlymodelname
@@ -8403,7 +8500,7 @@ if __name__ == '__main__':
     advparser.add_argument("--noshift","--no-context-shift", help="If set, do not attempt to Trim and Shift the GGUF context.", action='store_true')
     advparser.add_argument("--nofastforward", help="If set, do not attempt to fast forward GGUF context (always reprocess). Will also enable noshift", action='store_true')
     advparser.add_argument("--useswa", help="If set, allows Sliding Window Attention (SWA) KV Cache, which saves memory but cannot be used with context shifting.", action='store_true')
-    advparser.add_argument("--smartcache", help="Enables intelligent context switching by saving KV cache snapshots to RAM. Requires fast forwarding.", action='store_true')
+    advparser.add_argument("--smartcache", help="Enables intelligent context switching by saving KV cache snapshots to RAM. Requires fast forwarding.", metavar=('limit'), nargs='?', const=1, type=int, default=0)
     advparser.add_argument("--ropeconfig", help="If set, uses customized RoPE scaling from configured frequency scale and frequency base (e.g. --ropeconfig 0.25 10000). Otherwise, uses NTK-Aware scaling set automatically based on context size. For linear rope, simply set the freq-scale and ignore the freq-base",metavar=('[rope-freq-scale]', '[rope-freq-base]'), default=[0.0, 10000.0], type=float, nargs='+')
     advparser.add_argument("--overridenativecontext", help="Overrides the native trained context of the loaded model with a custom value to be used for Rope scaling.",metavar=('[trained context]'), type=int, default=0)
     compatgroup3 = advparser.add_mutually_exclusive_group()

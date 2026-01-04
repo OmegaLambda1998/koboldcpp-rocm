@@ -77,6 +77,7 @@ struct load_model_inputs
     const bool highpriority = false;
     const bool swa_support = false;
     const bool smartcache = false;
+    const int smartcacheslots = 0;
     const bool pipelineparallel = false;
     const float lora_multiplier = 1.0f;
     const bool quiet = false;
@@ -124,6 +125,7 @@ struct generation_inputs
     const float smoothing_factor = 0.0f;
     const float smoothing_curve = 1.0f;
     const float adaptive_target = -1.0f;
+    const float adaptive_decay = 0.9f;
     const float dry_multiplier = 0.0f;
     const float dry_base = 0.0f;
     const int dry_allowed_length = 0;
@@ -216,6 +218,8 @@ struct sd_generation_inputs
     const int vid_req_frames = 1;
     const int video_output_type = 0; //0=gif, 1=avi, 2=both
     const bool remove_limits = false;
+    const bool circular_x = false;
+    const bool circular_y = false;
 };
 struct sd_generation_outputs
 {
